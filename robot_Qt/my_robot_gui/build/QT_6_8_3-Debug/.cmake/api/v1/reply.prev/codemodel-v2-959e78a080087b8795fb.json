@@ -1,0 +1,97 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-Debug-1468979d05f51064b9cd.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.16"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3,
+						4
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "my_robot_gui",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3,
+						4
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "gui_node::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-gui_node-Debug-24f41c0c3015c94a057b.json",
+					"name" : "gui_node",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "gui_node_autogen::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-gui_node_autogen-Debug-a9675f41b647a0320cc8.json",
+					"name" : "gui_node_autogen",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "gui_node_autogen_timestamp_deps::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-gui_node_autogen_timestamp_deps-Debug-13bd97d6e10177e78a4a.json",
+					"name" : "gui_node_autogen_timestamp_deps",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "my_robot_gui_uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-my_robot_gui_uninstall-Debug-5ca616ee9f5158bb4034.json",
+					"name" : "my_robot_gui_uninstall",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-uninstall-Debug-707286aa052b848d507f.json",
+					"name" : "uninstall",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/ubuntu/turtlebot3_ws/src/my_robot_gui/build/QT_6_8_3-Debug",
+		"source" : "/home/ubuntu/turtlebot3_ws/src/my_robot_gui"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 3
+	}
+}
