@@ -52,7 +52,7 @@ ROS2 미들웨어를 거치지 않는 별도의 통신망 구축을 위한 소�
 cd ~/turtlebot3_ws/src/
 
 # 2. 저장소 Clone
-git clone [https://github.com/seolihan651/Intel-4th-Project.git](https://github.com/seolihan651/Intel-4th-Project.git)
+git clone https://github.com/seolihan651/Intel-4th-Project.git
 
 # 3. 의존성 설치 및 빌드 (필요시)
 cd ~/turtlebot3_ws
