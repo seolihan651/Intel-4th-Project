@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'relay_bot = relay_bot_pkg.reactive_node:main',
             'rssi_sim = relay_bot_pkg.rssi_simulator:main',
+            'twist_rssi_sim = relay_bot_pkg.rssi_simulator_twist:main',
         ],
     },
 )

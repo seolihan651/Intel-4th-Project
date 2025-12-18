@@ -2,13 +2,13 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int32
 from nav_msgs.msg import Odometry
+# [수정 1] DeleteEntity 추가
 from gazebo_msgs.srv import SpawnEntity, SetEntityState, DeleteEntity
-from geometry_msgs.msg import Pose, Point, Quaternion
+from geometry_msgs.msg import Pose, Point, Quaternion, Twist
 import math
 import random
 import time
 
-# [수정 1] Camera를 static=true로 변경하여 물리 엔진 영향 제거 (좌표 이동이 훨씬 부드러움)
 CAM_SDF = """
 <sdf version='1.6'>
   <model name='virtual_camera'>
@@ -24,7 +24,6 @@ CAM_SDF = """
 </sdf>
 """
 
-# PC 모델 (변경 없음)
 PC_SDF = """
 <sdf version='1.6'>
   <model name='virtual_pc'>
@@ -40,15 +39,15 @@ PC_SDF = """
 </sdf>
 """
 
-class RssiSimulator(Node):
+class RssiSimulatorTwist(Node):
     def __init__(self):
-        super().__init__('rssi_simulator')
+        super().__init__('rssi_simulator_twist')
 
         # --- 설정 ---
         self.pc_position = (-2.0, 0.0)
-        self.cam_center = (2.0, 0.0)
-        self.cam_radius = 5.0
-        self.cam_speed = 0.05
+        
+        self.cam_x = 2.0
+        self.cam_y = 0.0
         
         self.tx_power = -30
         self.path_loss_exponent = 6.5
@@ -56,15 +55,16 @@ class RssiSimulator(Node):
         # --- 상태 변수 ---
         self.robot_x = 0.0
         self.robot_y = 0.0
-        self.start_time = time.time()
-
-        # 스폰 상태 관리 플래그
-        self.spawn_req_sent = False   # 요청을 보냈는지
-        self.markers_ready = False    # 스폰이 완전히 끝났는지
+        
+        self.spawn_req_sent = False
+        self.markers_ready = False
 
         # --- 통신 ---
         self.odom_sub = self.create_subscription(
             Odometry, 'odom', self.odom_callback, 10)
+
+        self.cam_cmd_sub = self.create_subscription(
+            Twist, 'cmd_vel_cam', self.cam_cmd_callback, 10)
 
         self.pub_rssi_pc = self.create_publisher(Int32, 'rssi/pc', 10)
         self.pub_rssi_cam = self.create_publisher(Int32, 'rssi/cam', 10)
@@ -72,18 +72,23 @@ class RssiSimulator(Node):
         # --- Gazebo 클라이언트 ---
         self.spawn_client = self.create_client(SpawnEntity, '/spawn_entity')
         self.set_state_client = self.create_client(SetEntityState, '/gazebo/set_entity_state')
+        # [수정 2] 삭제용 클라이언트 생성
+        self.del_client = self.create_client(DeleteEntity, '/delete_entity')
         
-        # 0.1초마다 업데이트
         self.timer = self.create_timer(0.1, self.update_rssi)
         
-        self.get_logger().info("📡 RSSI Simulator with Visuals Started.")
+        self.get_logger().info("🎮 Manual RSSI Simulator Started. Waiting for cmd_vel_cam...")
+
+    def cam_cmd_callback(self, msg):
+        step_scale = 0.5
+        self.cam_x += msg.linear.x * step_scale
+        self.cam_y += msg.angular.z * step_scale 
 
     def spawn_markers(self):
-        """Gazebo에 마커 생성 요청 (비동기 콜백 패턴 적용)"""
         if not self.spawn_client.service_is_ready():
             return
 
-        # 1. PC 생성 요청
+        # 1. PC 생성
         req_pc = SpawnEntity.Request()
         req_pc.name = 'virtual_pc'
         req_pc.xml = PC_SDF
@@ -91,33 +96,48 @@ class RssiSimulator(Node):
         req_pc.initial_pose.position.y = self.pc_position[1]
         self.spawn_client.call_async(req_pc)
 
-        # 2. Camera 생성 요청
+        # 2. Camera 생성
         req_cam = SpawnEntity.Request()
         req_cam.name = 'virtual_camera'
         req_cam.xml = CAM_SDF
+        req_cam.initial_pose.position.x = self.cam_x
+        req_cam.initial_pose.position.y = self.cam_y
         
-        # [수정 2] Future 객체를 받아 콜백을 연결함
         future = self.spawn_client.call_async(req_cam)
         future.add_done_callback(self.spawn_done_callback)
         
         self.spawn_req_sent = True
-        self.get_logger().info("⏳ Spawning markers...")
 
     def spawn_done_callback(self, future):
-        """스폰이 완료되면 실행되는 콜백"""
         try:
             response = future.result()
             if response.success:
                 self.markers_ready = True
-                self.get_logger().info("✅ Markers Spawned Successfully! Starting movement.")
+                self.get_logger().info("✅ Markers Spawned!")
             else:
-                self.get_logger().warn(f"⚠️ Spawn failed: {response.status_message}")
+                # 이미 존재한다는 에러는 무시 (재시작 시 흔함)
+                pass 
         except Exception as e:
             self.get_logger().error(f"❌ Service call failed: {e}")
 
+    # [수정 3] 종료 시 객체 삭제 함수
+    def remove_entities(self):
+        if not self.del_client.service_is_ready():
+            self.get_logger().warn("⚠️ Delete service not ready.")
+            return
+
+        self.get_logger().info("🧹 Cleaning up Gazebo markers...")
+        
+        for name in ['virtual_pc', 'virtual_camera']:
+            req = DeleteEntity.Request()
+            req.name = name
+            
+            # 비동기 요청을 보내지만, 프로그램이 종료되기 전에 완료되어야 하므로
+            # spin_until_future_complete를 사용해 잠시 대기합니다.
+            future = self.del_client.call_async(req)
+            rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
+
     def update_marker_pos(self, x, y):
-        """Camera 마커 위치 이동"""
-        # [수정 3] 스폰이 완료되지 않았으면 이동 명령을 보내지 않음
         if not self.markers_ready or not self.set_state_client.service_is_ready():
             return
 
@@ -129,7 +149,6 @@ class RssiSimulator(Node):
         req.state.pose.orientation.w = 1.0
         req.state.reference_frame = 'world'
         
-        # 비동기 호출 (결과 확인용 콜백 추가 가능하나, 성능을 위해 생략)
         self.set_state_client.call_async(req)
 
     def odom_callback(self, msg):
@@ -144,24 +163,17 @@ class RssiSimulator(Node):
         return int(rssi + noise)
 
     def update_rssi(self):
-        # 마커 스폰 요청을 아직 안 했으면 시도
         if not self.spawn_req_sent:
             self.spawn_markers()
             
-        current_time = time.time() - self.start_time
+        current_cam_x = self.cam_x
+        current_cam_y = self.cam_y
 
-        # 1. 움직이는 카메라 좌표 계산
-        cam_x = self.cam_center[0] + self.cam_radius * math.cos(self.cam_speed * current_time)
-        cam_y = self.cam_center[1] + self.cam_radius * math.sin(self.cam_speed * current_time)
+        self.update_marker_pos(current_cam_x, current_cam_y)
 
-        # 2. Gazebo 시각화 업데이트 (스폰 완료 시에만 실행됨)
-        self.update_marker_pos(cam_x, cam_y)
-
-        # 3. RSSI 계산
         rssi_pc_val = self.calculate_rssi(self.pc_position[0], self.pc_position[1], self.robot_x, self.robot_y)
-        rssi_cam_val = self.calculate_rssi(cam_x, cam_y, self.robot_x, self.robot_y)
+        rssi_cam_val = self.calculate_rssi(current_cam_x, current_cam_y, self.robot_x, self.robot_y)
 
-        # 4. 발행
         msg_pc = Int32()
         msg_pc.data = rssi_pc_val
         self.pub_rssi_pc.publish(msg_pc)
@@ -170,17 +182,19 @@ class RssiSimulator(Node):
         msg_cam.data = rssi_cam_val
         self.pub_rssi_cam.publish(msg_cam)
         
-        # 디버깅: 스폰 완료 전에는 좌표 변화 로그만 출력
         if not self.markers_ready:
              self.get_logger().info('Waiting for Gazebo spawn...')
 
 def main(args=None):
     rclpy.init(args=args)
-    node = RssiSimulator()
+    node = RssiSimulatorTwist()
+    
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        pass
+        # [수정 4] Ctrl+C 감지 시 삭제 수행
+        node.get_logger().info("\n🛑 Shutting down...")
+        node.remove_entities()
     finally:
         node.destroy_node()
         rclpy.shutdown()

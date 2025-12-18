@@ -3,166 +3,232 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 from rclpy.qos import QoSProfile
-
 from std_msgs.msg import Int32
+import random
 
+# ---------------------------------------------------------
+# 1. 1D 칼만 필터 클래스 (수정됨)
+# ---------------------------------------------------------
+class SimpleKalmanFilter:
+    # 변수명을 호출할 때 쓰는 Q, R, P, initial_value와 똑같이 맞췄습니다.
+    def __init__(self, Q, R, P, initial_value):
+        self.Q = Q              # 프로세스 노이즈 (Process Noise)
+        self.R = R              # 측정 노이즈 (Measurement Noise)
+        self.P = P              # 추정 오차 (Estimation Error)
+        self.X = initial_value  # 초기값 (Initial Value)
+
+    def update(self, measurement):
+        # 1. Prediction Update
+        self.P = self.P + self.Q
+
+        # 2. Measurement Update
+        K = self.P / (self.P + self.R)      # 칼만 이득 계산
+        self.X = self.X + K * (measurement - self.X)
+        self.P = (1 - K) * self.P
+        
+        return self.X
+
+# ---------------------------------------------------------
+# 2. 메인 로봇 제어 노드
+# ---------------------------------------------------------
 class ReactiveRelayBot(Node):
     def __init__(self):
         super().__init__('reactive_relay_bot')
         
-        # QoS 설정 (센서 데이터는 최신값이 중요하므로)
+        # QoS 설정
         qos_policy = QoSProfile(depth=10)
         
-        # Subscriber: 라이다 데이터 수신
-        self.scan_sub = self.create_subscription(
-            LaserScan,
-            'scan',
-            self.scan_callback,
-            qos_policy)
-            
-        # Publisher: 로봇 속도 명령
+        # Subscriber & Publisher
+        self.scan_sub = self.create_subscription(LaserScan, 'scan', self.scan_callback, qos_policy)
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
+        self.rssi_pc = self.create_subscription(Int32, 'rssi/pc', self.rssi_pc_callback, 10)
+        self.rssi_cam = self.create_subscription(Int32, 'rssi/cam', self.rssi_cam_callback, 10)
         
-        # 타이머: 0.1초마다 제어 판단
+        # 타이머 (0.1초 주기)
         self.timer = self.create_timer(0.1, self.control_loop)
+
+        # [필터 설정] Wifi 신호는 노이즈가 심하므로 R값을 높게 설정
+        # Q=0.1: 로봇이 움직이며 신호가 서서히 변함
+        # R=10.0: 측정값이 많이 튐
+        self.kf_pc = SimpleKalmanFilter(Q=0.1, R=10.0, P=1.0, initial_value=-60.0)
+        self.kf_cam = SimpleKalmanFilter(Q=0.1, R=10.0, P=1.0, initial_value=-60.0)
 
         # 상태 변수
         self.obstacle_detected = False
-        self.escape_direction = 0.0 # 회피할 방향 (양수: 좌회전, 음수: 우회전)
+        self.escape_direction = 0.0 
         
-        # RSSI 변수 (실제 구현 시 Wifi 스캐너에서 업데이트 받아야 함)
-        self.rssi_pc = -99 
-        self.rssi_cam = -99
 
-        self.prev_score = -200.0  # 이전 평가 점수
-        self.action_state = 'FORWARD' # 현재 행동 상태 (FORWARD, TURN)
-        self.state_timer = 0  # 행동 지속 시간 카운터
+        self.prev_score = 0.0     # 이전 점수 (0~100점)
+        self.action_state = 'FORWARD' 
+        self.state_timer = 0      # 상태 유지 타이머
         self.turn_direction = 1.0 # 1.0(좌), -1.0(우)
         
-        self.rssi_pc_sub = self.create_subscription(
-            Int32, 'rssi/pc', self.rssi_pc_callback, 10)
-            
-        self.rssi_cam_sub = self.create_subscription(
-            Int32, 'rssi/cam', self.rssi_cam_callback, 10)
+        # 기본 주행 파라미터
+        self.BASE_SPEED = 0.15
+        self.MAX_SPEED = 0.22
 
     def scan_callback(self, msg):
-        """
-        LIDAR 데이터를 받아 전방 장애물 여부를 판단합니다.
-        Turtlebot3 LDS-01/02 기준: ranges[0]이 정면입니다.
-        """
+        """ 장애물 감지 로직 (기존 유지) """
         scan_ranges = msg.ranges
-        
-        # 노이즈(0.0)나 무한대(inf) 처리 -> 최대 거리로 치환
         cleaned_ranges = [r if r > 0.0 else 10.0 for r in scan_ranges]
         
-        # 1. 전방 감지 (정면 기준 좌우 30도)
-        # Python 리스트 슬라이싱: 뒤쪽 30개 + 앞쪽 30개
         front_ranges = cleaned_ranges[-30:] + cleaned_ranges[:30]
         min_front_dist = min(front_ranges)
-        
-        # 2. 좌/우 거리 감지 (회피 방향 결정을 위해)
         left_dist = min(cleaned_ranges[30:90])
         right_dist = min(cleaned_ranges[270:330])
 
-        # 3. 충돌 위험 판단 (0.35m 이내에 물체 감지 시)
         collision_threshold = 0.35
         
         if min_front_dist < collision_threshold:
             self.obstacle_detected = True
-            # 더 넓은 쪽으로 회전 방향 결정
             if left_dist > right_dist:
-                self.escape_direction = 0.5  # 좌회전 (왼쪽이 넓으니까)
+                self.escape_direction = 0.5 
             else:
-                self.escape_direction = -0.5 # 우회전
+                self.escape_direction = -0.5
         else:
             self.obstacle_detected = False
 
-    def get_rssi_command(self):
+    def calculate_quality(self):
+        """ 
+        [PC 우선순위 강화 버전] 
+        PC 신호가 생존선(Safety Line)을 넘지 못하면 카메라는 쳐다보지도 않음
         """
-        이전에 논의했던 RSSI 기반 Gradient Ascent 로직이 들어갈 곳
-        여기서는 예시로 직진 명령만 반환합니다.
-        """
-        cmd = Twist()
-        # 1. 현재 상태 평가 (Objective Function)
-        # 통신은 둘 중 하나라도 끊기면 안 되므로, 더 낮은 신호를 기준으로 삼습니다.
-        # 예: PC(-40), Cam(-80) -> 점수는 -80. 로봇은 Cam 쪽으로 이동해야 함.
-        current_score = min(self.rssi_pc, self.rssi_cam)
-        
-        # 2. 목표 도달 확인 (신호가 충분히 좋으면 정지 - 배터리 절약 및 진동 방지)
-        target_rssi = -45 # 목표 감도
-        if current_score > target_rssi:
-            self.get_logger().info(f"✅ 위치 양호 (Score: {current_score}). 대기 중...")
-            return cmd # 정지 상태 반환
+        def to_score(rssi):
+            if rssi >= -30: return 100.0
+            if rssi <= -70: return 0.0
+            return (rssi + 70) * 2.5 
 
-        # 3. 그라디언트 판단 (이전보다 좋아졌는가?)
-        # 노이즈를 고려하여 변화량이 2dB 이상일 때만 유의미하게 판단
+        s_pc = to_score(self.rssi_pc)
+        s_cam = to_score(self.rssi_cam)
+
+        # -------------------------------------------------------------
+        # 1. [최우선] PC 생존선 검사 (Survival Mode)
+        # -------------------------------------------------------------
+        # PC 점수가 45점(약 -72dBm) 미만이면 '비상 복귀' 모드
+        if s_pc < 45.0:
+            # s_cam 값은 완전히 무시합니다.
+            # 0.5를 곱하는 이유: 점수를 의도적으로 낮게 만들어(최대 22.5점), 
+            # 로봇이 "지금 상태가 매우 나쁘다"고 느끼게 하여 개선 의지를 높임
+            return s_pc * 0.5 
+
+        # -------------------------------------------------------------
+        # 2. [차순위] 카메라 신호 관리 (Service Mode)
+        # -------------------------------------------------------------
+        # PC는 안전하므로(45점 이상), 이제 카메라 신호가 약한지 봅니다.
+        if s_cam < 40.0:
+            # PC는 괜찮은데 카메라가 끊길 것 같으면, 카메라 쪽으로 이동
+            return s_cam * 0.8 
+        
+        # -------------------------------------------------------------
+        # 3. [안전 구역] 위치 최적화 (Safe Zone)
+        # -------------------------------------------------------------
+        # 둘 다 신호가 충분한 경우입니다.
+        # 여기서 PC 쪽에 가중치를 더 주면(0.7), 로봇이 PC 쪽에 더 가깝게 머뭅니다.
+        # (PC: 70%, CAM: 30% 비중)
+        return (s_pc * 0.7) + (s_cam * 0.3)
+
+    def get_rssi_command(self):
+        cmd = Twist()
+        
+        # 1. 현재 품질 점수 계산 (필터링된 RSSI 사용)
+        current_score = self.calculate_quality()
+        self.get_logger().info(f"RSSI 신호 (PC : {self.rssi_pc:.2f}, CAM : {self.rssi_cam:.2f})")
+        
+        # 2. 변화량(Gradient) 계산
         diff = current_score - self.prev_score
         
-        # 4. 행동 결정 로직 (Finite State Machine)
-        
-        # 상태 전환 주기: 매 0.1초마다 판단하면 로봇이 떨기만 하므로, 
-        # 한 동작을 최소 10틱(1초) 정도는 유지하게 합니다.
+        # 3. 목표 도달 시 정지 (배터리 절약)
+        if current_score > 90.0:
+            self.get_logger().info(f"✅ 위치 최적 (Score: {current_score:.1f}). 대기.")
+            return cmd
+
+        # 4. 행동 결정 로직 (가변 속도 적용)
         if self.state_timer > 0:
             self.state_timer -= 1
         else:
-            # 행동 결정 시점 도달
-            if self.action_state == 'FORWARD':
-                if diff >= 0: 
-                    # 상황이 좋아지거나 같음 -> 하던 대로 계속 직진
-                    self.get_logger().info(f"👍 신호 개선중 ({diff:+.2f}dB). 직진.")
-                    self.state_timer = 5 # 0.5초 더 직진
-                else:
-                    # 상황이 나빠짐 -> 후퇴 혹은 회전 필요
-                    self.get_logger().info(f"👎 신호 악화 ({diff:+.2f}dB). 탐색 시작.")
-                    self.action_state = 'TURN'
-                    self.state_timer = 15 # 1.5초간 회전
+            # --- 결정의 순간 ---
+            if self.action_state == 'RECOVER' :
+                # 신호가 급락했으므로, 방금 온 방향이 잘못됨 -> 후진 후 회전
+                self.get_logger().info(f"🚫 급락 발생 ({diff:.2f}). 후진 및 탐색.")
+                
+                # 1단계: 잠깐 후진 (직전의 좋은 위치로)
+                cmd.linear.x = cmd.linear.x * (-1.0)
+                cmd.angular.z = 0.0
+                self.state_timer = 8 # 0.8초 후진
+                
+                # 다음 상태 예약
+                self.action_state = 'TURN'
+            elif self.action_state == 'FORWARD':
+                
+                if diff > 0:
+                    # [상황 A] 신호가 좋아짐 -> 가속 (Sprint)
+                    # 변화량이 클수록 더 확신을 가짐
+                    speed_boost = min(diff * 0.02, 0.07) # 최대 0.07m/s 추가
+                    cmd.linear.x = self.BASE_SPEED + speed_boost
+                    cmd.angular.z = 0.0
                     
-                    # 회전 방향 랜덤 결정 (또는 이전에 좋았던 방향)
-                    import random
-                    self.turn_direction = random.choice([0.5, -0.5])
+                    self.get_logger().info(f"🚀 개선중 (+{diff:.2f}). 가속 직진.")
+                    self.state_timer = 3 # 0.3초간 유지 (반응성 높임)
+
+                elif diff > -2.0:
+                    # [상황 B] 신호가 '약간' 나빠짐 -> 감속 및 커브 (Curve/Wander)
+                    # 바로 회전하지 말고 부드럽게 궤적 수정
+                    cmd.linear.x = self.BASE_SPEED * 0.6 # 속도 줄임
+                    cmd.angular.z = random.choice([0.3, -0.3]) # 약간 비틀기
+                    
+                    self.get_logger().info(f"📉 약간 하락 ({diff:.2f}). 커브 주행.")
+                    self.state_timer = 5 # 0.5초간 유지
+
+                else:
+                    # [상황 C] 신호가 '급격히' 나빠짐 -> 즉시 탐색 모드
+                    self.action_state = 'RECOVER'
+                    self.state_timer = 0 # 즉시 실행
+
+            
 
             elif self.action_state == 'TURN':
-                # 회전 후에는 다시 직진해봐야 함
-                self.action_state = 'FORWARD'
-                self.state_timer = 10 # 1초간 직진 시도
-        
-        # 5. 현재 상태 기록 업데이트
-        self.prev_score = current_score
+                # 제자리 회전으로 새로운 방향 모색
+                cmd.linear.x = 0.0
+                cmd.angular.z = random.choice([0.6, -0.6]) # 회전
+                self.state_timer = 10 # 1초 회전
+                
+                self.action_state = 'FORWARD' # 다음엔 직진 시도
 
-        # 6. 실제 속도 명령 생성
-        if self.action_state == 'FORWARD':
-            cmd.linear.x = 0.15 # 전진 속도
-            cmd.angular.z = 0.0
-        elif self.action_state == 'TURN':
-            cmd.linear.x = 0.0
-            cmd.angular.z = self.turn_direction # 회전 속도
+        # 5. 상태 기록 업데이트
+        self.prev_score = current_score
+        
+        # (타이머가 남아있을 때 실행할 명령 유지)
+        if self.state_timer > 0 and self.action_state != 'RECOVER': 
+             # RECOVER는 위에서 직접 할당했으므로 제외, 나머지는 유지
+             pass 
 
         return cmd
 
     def control_loop(self):
         cmd = Twist()
 
-        # [우선순위 1] 생존 본능: 장애물 회피
+        # [우선순위 1] 장애물 회피
         if self.obstacle_detected:
-            self.get_logger().info("🚧 장애물 감지! 회피 동작 중...")
+            self.get_logger().info("🚧 장애물 회피 중")
             cmd.linear.x = 0.0
-            cmd.angular.z = self.escape_direction # 계산된 방향으로 회전
+            cmd.angular.z = self.escape_direction
+            # 회피 중에는 이전 점수 리셋 (회피 후 엉뚱한 판단 방지)
+            self.prev_score = self.calculate_quality() 
 
-        # [우선순위 2] 목표 수행: RSSI 추적
+        # [우선순위 2] RSSI 추적
         else:
-            # 장애물이 없을 때만 RSSI 알고리즘 실행
             cmd = self.get_rssi_command()
+            cmd.linear.x = cmd.linear.x * 1.5
         
         self.cmd_pub.publish(cmd)
     
     def rssi_pc_callback(self, msg):
-        self.rssi_pc = msg.data
-        # 로그로 확인하고 싶으면 아래 주석 해제
-        # self.get_logger().info(f'Received PC RSSI: {self.rssi_pc}')
+        # 칼만 필터로 업데이트
+        self.rssi_pc = self.kf_pc.update(float(msg.data))
 
     def rssi_cam_callback(self, msg):
-        self.rssi_cam = msg.data
-        self.get_logger().info(f'Received CAM RSSI: {self.rssi_cam}')
+        # 칼만 필터로 업데이트
+        self.rssi_cam = self.kf_cam.update(float(msg.data))
 
 def main(args=None):
     rclpy.init(args=args)
