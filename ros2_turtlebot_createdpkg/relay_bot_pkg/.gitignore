@@ -1,0 +1,11 @@
+# .gitignore 예시
+build/
+install/
+log/
+.colcon/
+__pycache__/
+*.py[cod]
+*$py.class
+.vscode/
+.idea/
+*~

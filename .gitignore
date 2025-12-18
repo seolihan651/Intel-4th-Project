@@ -1,0 +1,21 @@
+# ROS2 build files (혹시 실수로 들어갈까봐 방지)
+build/
+install/
+log/
+
+# Python & C++ junk
+__pycache__/
+*.py[cod]
+*.o
+*.so
+
+# IDE settings
+.vscode/
+.idea/
+
+# OS generated
+.DS_Store
+
+# (옵션) 기타 작업물에서 제외할 것들
+*.pdf    # 완성된 pdf만 올리고 싶다면 제외 안 함
+*.log
