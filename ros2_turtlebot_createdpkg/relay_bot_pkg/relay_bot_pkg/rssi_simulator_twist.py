@@ -50,7 +50,7 @@ class RssiSimulatorTwist(Node):
         self.cam_y = 0.0
         
         self.tx_power = -30
-        self.path_loss_exponent = 6.5
+        self.path_loss_exponent = 3.5
         
         # --- 상태 변수 ---
         self.robot_x = 0.0
@@ -157,7 +157,7 @@ class RssiSimulatorTwist(Node):
 
     def calculate_rssi(self, tx_x, tx_y, rx_x, rx_y):
         distance = math.sqrt((tx_x - rx_x)**2 + (tx_y - rx_y)**2)
-        if distance < 0.1: distance = 0.1
+        if distance < 1: distance = 1
         rssi = self.tx_power - (10 * self.path_loss_exponent * math.log10(distance))
         noise = random.uniform(-2.0, 2.0)
         return int(rssi + noise)

@@ -41,8 +41,13 @@ class ReactiveRelayBot(Node):
         # Subscriber & Publisher
         self.scan_sub = self.create_subscription(LaserScan, 'scan', self.scan_callback, qos_policy)
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
-        self.rssi_pc = self.create_subscription(Int32, 'rssi/pc', self.rssi_pc_callback, 10)
-        self.rssi_cam = self.create_subscription(Int32, 'rssi/cam', self.rssi_cam_callback, 10)
+        
+        # RSSI 구독객체와 값 변수 분리
+        self.rssi_pc_sub = self.create_subscription(Int32, 'rssi/pc', self.rssi_pc_callback, 10)
+        self.rssi_cam_sub = self.create_subscription(Int32, 'rssi/cam', self.rssi_cam_callback, 10)
+        
+        self.rssi_pc = -60.0
+        self.rssi_cam = -60.0
         
         # 타이머 (0.1초 주기)
         self.timer = self.create_timer(0.1, self.control_loop)
@@ -62,10 +67,12 @@ class ReactiveRelayBot(Node):
         self.action_state = 'FORWARD' 
         self.state_timer = 0      # 상태 유지 타이머
         self.turn_direction = 1.0 # 1.0(좌), -1.0(우)
+        self.last_cmd = Twist()   # 이전 명령 저장용
         
         # 기본 주행 파라미터
         self.BASE_SPEED = 0.15
         self.MAX_SPEED = 0.22
+        self.scan_direction = 1.0
 
     def scan_callback(self, msg):
         """ 장애물 감지 로직 (기존 유지) """
@@ -126,82 +133,94 @@ class ReactiveRelayBot(Node):
         # 여기서 PC 쪽에 가중치를 더 주면(0.7), 로봇이 PC 쪽에 더 가깝게 머뭅니다.
         # (PC: 70%, CAM: 30% 비중)
         return (s_pc * 0.7) + (s_cam * 0.3)
-
     def get_rssi_command(self):
         cmd = Twist()
         
-        # 1. 현재 품질 점수 계산 (필터링된 RSSI 사용)
+        # 1. RSSI 점수 및 변화량 계산
         current_score = self.calculate_quality()
-        self.get_logger().info(f"RSSI 신호 (PC : {self.rssi_pc:.2f}, CAM : {self.rssi_cam:.2f})")
-        
-        # 2. 변화량(Gradient) 계산
         diff = current_score - self.prev_score
         
-        # 3. 목표 도달 시 정지 (배터리 절약)
+        # 2. 목표 도달 시 정지
         if current_score > 90.0:
-            self.get_logger().info(f"✅ 위치 최적 (Score: {current_score:.1f}). 대기.")
+            self.last_cmd = Twist()
             return cmd
 
-        # 4. 행동 결정 로직 (가변 속도 적용)
+        # 3. 상태 유지 타이머 처리
         if self.state_timer > 0:
             self.state_timer -= 1
+            cmd = self.last_cmd
+        
         else:
-            # --- 결정의 순간 ---
-            if self.action_state == 'RECOVER' :
-                # 신호가 급락했으므로, 방금 온 방향이 잘못됨 -> 후진 후 회전
-                self.get_logger().info(f"🚫 급락 발생 ({diff:.2f}). 후진 및 탐색.")
-                
-                # 1단계: 잠깐 후진 (직전의 좋은 위치로)
-                cmd.linear.x = cmd.linear.x * (-1.0)
+            # -----------------------------------------------------------
+            # [A] 비상 후진 (Emergency) - 점수가 너무 낮을 때
+            # -----------------------------------------------------------
+            if current_score < 40.0:
+                self.get_logger().warn(f"🚫 비상! 점수 저조 ({current_score:.1f}). 후진.")
+                cmd.linear.x = -0.15 # 확실한 후진
                 cmd.angular.z = 0.0
-                self.state_timer = 8 # 0.8초 후진
+                self.state_timer = 5
+                self.action_state = 'SEARCH' # 후진 후 탐색 모드로
+
+            # -----------------------------------------------------------
+            # [B] 아크 탐색 (Arc Search) - 신호가 애매하거나 하락세일 때
+            # -----------------------------------------------------------
+            # 반원을 그리며(이동하며) 신호 변화를 측정합니다.
+            elif self.action_state == 'SEARCH' or current_score < 55.0:
                 
-                # 다음 상태 예약
-                self.action_state = 'TURN'
-            elif self.action_state == 'FORWARD':
+                # B-1. 신호가 확실히 좋아짐 (찾았다!)
+                if diff > 0.5: 
+                    self.get_logger().info(f"✨ 경로 발견! ({self.scan_direction} 방향)")
+                    # 가속하며 해당 방향으로 주행 전환
+                    cmd.linear.x = self.BASE_SPEED
+                    cmd.angular.z = 0.3 * self.scan_direction 
+                    self.action_state = 'FORWARD'
+                    self.state_timer = 5
+
+                # B-2. 신호가 계속 나빠짐 (여기가 아닌가봐)
+                elif diff < -0.2:
+                    self.get_logger().info("↩️ 방향 전환 (Arc Flip)")
+                    self.scan_direction *= -1.0 # 반대 방향으로 아크 뒤집기
+                    
+                    # 방향을 바꿀 때는 제자리에서 살짝 돌려줌 (즉각 반응)
+                    cmd.linear.x = 0.0
+                    cmd.angular.z = 0.8 * self.scan_direction
+                    self.state_timer = 2
+                
+                # B-3. 탐색 진행 (천천히 움직이며 데이터 수집)
+                else:
+                    self.get_logger().info(f"📡 아크 탐색 중... ({current_score:.1f})")
+                    # [핵심] 위치를 바꾸기 위해 전진 성분을 섞음
+                    cmd.linear.x = 0.08  # 천천히 전진
+                    cmd.angular.z = 0.6 * self.scan_direction # 강하게 회전
+                    self.state_timer = 2 # 짧게 끊어서 자주 판단
+
+            # -----------------------------------------------------------
+            # [C] 일반 주행 (FORWARD)
+            # -----------------------------------------------------------
+            else: # action_state == 'FORWARD' (점수 양호)
+                self.action_state = 'FORWARD'
                 
                 if diff > 0:
-                    # [상황 A] 신호가 좋아짐 -> 가속 (Sprint)
-                    # 변화량이 클수록 더 확신을 가짐
-                    speed_boost = min(diff * 0.02, 0.07) # 최대 0.07m/s 추가
-                    cmd.linear.x = self.BASE_SPEED + speed_boost
+                    # 신호 좋음: 속도 높여서 직진
+                    cmd.linear.x = self.BASE_SPEED + 0.05
                     cmd.angular.z = 0.0
-                    
-                    self.get_logger().info(f"🚀 개선중 (+{diff:.2f}). 가속 직진.")
-                    self.state_timer = 3 # 0.3초간 유지 (반응성 높임)
-
-                elif diff > -2.0:
-                    # [상황 B] 신호가 '약간' 나빠짐 -> 감속 및 커브 (Curve/Wander)
-                    # 바로 회전하지 말고 부드럽게 궤적 수정
-                    cmd.linear.x = self.BASE_SPEED * 0.6 # 속도 줄임
-                    cmd.angular.z = random.choice([0.3, -0.3]) # 약간 비틀기
-                    
-                    self.get_logger().info(f"📉 약간 하락 ({diff:.2f}). 커브 주행.")
-                    self.state_timer = 5 # 0.5초간 유지
-
-                else:
-                    # [상황 C] 신호가 '급격히' 나빠짐 -> 즉시 탐색 모드
-                    self.action_state = 'RECOVER'
-                    self.state_timer = 0 # 즉시 실행
-
-            
-
-            elif self.action_state == 'TURN':
-                # 제자리 회전으로 새로운 방향 모색
-                cmd.linear.x = 0.0
-                cmd.angular.z = random.choice([0.6, -0.6]) # 회전
-                self.state_timer = 10 # 1초 회전
+                    self.state_timer = 3
                 
-                self.action_state = 'FORWARD' # 다음엔 직진 시도
+                elif diff > -1.5:
+                    # 신호 유지: 완만한 커브로 넓게 이동
+                    cmd.linear.x = self.BASE_SPEED
+                    cmd.angular.z = random.choice([0.2, -0.2])
+                    self.state_timer = 5
+                
+                else:
+                    # 신호 급락: 즉시 탐색 모드 전환
+                    self.get_logger().info("📉 신호 유실 감지. 아크 탐색 시작.")
+                    self.action_state = 'SEARCH'
+                    self.state_timer = 0
 
-        # 5. 상태 기록 업데이트
+            self.last_cmd = cmd
+
         self.prev_score = current_score
-        
-        # (타이머가 남아있을 때 실행할 명령 유지)
-        if self.state_timer > 0 and self.action_state != 'RECOVER': 
-             # RECOVER는 위에서 직접 할당했으므로 제외, 나머지는 유지
-             pass 
-
         return cmd
 
     def control_loop(self):
@@ -217,8 +236,9 @@ class ReactiveRelayBot(Node):
 
         # [우선순위 2] RSSI 추적
         else:
-            cmd = self.get_rssi_command()
-            cmd.linear.x = cmd.linear.x * 1.5
+            rssi_cmd = self.get_rssi_command()
+            cmd.linear.x = rssi_cmd.linear.x * 1.5
+            cmd.angular.z = rssi_cmd.angular.z
         
         self.cmd_pub.publish(cmd)
     
