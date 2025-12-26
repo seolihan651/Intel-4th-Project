@@ -50,7 +50,7 @@ class RssiSimulatorTwist(Node):
         self.cam_y = 0.0
         
         self.tx_power = -30
-        self.path_loss_exponent = 5.5
+        self.path_loss_exponent = 3.5
         
         # --- 상태 변수 ---
         self.robot_x = 0.0

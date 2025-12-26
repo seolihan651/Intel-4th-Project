@@ -98,7 +98,10 @@ class ReactiveRelayBot(Node):
             self.obstacle_detected = False
 
     def calculate_quality(self):
-        """ 점수 계산은 물리적 신호 변화만 반영하도록 단순화 """
+        """ 
+        [수정됨] 목줄(Leash) 기능 추가
+        PC 신호가 끊어질 위험이 있으면 점수를 급격히 낮춰 복귀를 강제함
+        """
         def to_score(rssi):
             if rssi >= -30: return 100.0
             if rssi <= -70: return 0.0
@@ -107,97 +110,113 @@ class ReactiveRelayBot(Node):
         s_pc = to_score(self.rssi_pc)
         s_cam = to_score(self.rssi_cam)
         
-        # 멤버 변수로 저장해두어 get_rssi_command에서 개별 값을 확인할 수 있게 함
         self.current_s_pc = s_pc 
         
-        # [수정] 페널티 로직 제거 -> 항상 연속적인 값 반환
-        # PC 점수 비중을 높게(0.7) 유지하여 PC 변화에 민감하게 반응
-        return (s_pc * 0.7) + (s_cam * 0.3)
+        # ---------------------------------------------------------
+        # 1. 목줄 (The Leash) - 안전장치
+        # ---------------------------------------------------------
+        # PC RSSI가 -65dBm 보다 낮아지면(더 나빠지면) 비상 상황으로 간주
+        # 끊어지기 직전(-70dBm)보다 약간 여유를 둠 (-65dBm)
+        SAFE_THRESHOLD = -65.0 
+        
+        if self.rssi_pc < SAFE_THRESHOLD:
+            # 점수를 음수로 만들어버림 -> 이전 점수(양수)와의 차이(Diff)가 
+            # 거대한 마이너스 값이 됨 -> 로봇은 '급락(Sudden Drop)'으로 인식하고 반전(Invert) 수행
+            return -100.0 
+
+        # ---------------------------------------------------------
+        # 2. 안전 구역 내에서의 행동 (PC <-> CAM 균형 탐색)
+        # ---------------------------------------------------------
+        # PC 신호가 안전하다면, CAM 신호를 찾아 멀리 나가는 것을 허용
+        # min() 함수를 사용하여 두 신호의 균형점을 찾음
+        final_score = min(s_pc, s_cam)
+        
+        # 약간의 탐색 동력
+        final_score = final_score * 0.9 + (s_pc + s_cam) * 0.05
+        
+        return final_score
     
     def get_rssi_command(self):
         cmd = Twist()
         
-        # 1. 계산 (이제 급격한 점수 널뛰기가 없음)
+        # 1. 점수 계산 및 델타 확인
         current_score = self.calculate_quality()
         diff = current_score - self.prev_score
         
-        # 2. 목표 도달 정지
-        if current_score > 90.0:
+        # [목표 도달] 점수가 충분히 높으면 정지 (사용자 요청 반영)
+        if current_score > 55.0:
+            self.get_logger().info(f"✅ 목표 신호 도달! (점수: {current_score:.1f})")
             self.last_cmd = Twist()
             return cmd
 
-        # 3. 타이머 유지
+        # [상태 유지 타이머] 회전이나 후진 동작을 일정 시간 수행하기 위함
         if self.state_timer > 0:
             self.state_timer -= 1
             cmd = self.last_cmd
+            # 상태가 바뀌는 순간에 prev_score 갱신을 막기 위해 여기서 리턴
+            # (단, 회전 중에는 RSSI 변화가 없으므로 점수 로직에 영향 없음)
             return cmd 
 
         # -----------------------------------------------------------
-        # [A] 급락 감지 (Sudden Drop) -> 행동 반전
+        # [A] 탐색 로직 (State Machine)
         # -----------------------------------------------------------
-        if diff < -2.0:
-            self.get_logger().warn(f"📉 신호 급락! ({diff:.2f}) 행동 반전.")
-            if self.is_moving_forward:
-                self.is_moving_forward = False 
-                cmd.linear.x = -0.2
-                self.action_state = 'INVERT_BACK'
-            else:
-                self.is_moving_forward = True
-                cmd.linear.x = 0.25
-                self.action_state = 'INVERT_FWD'
-            
-            cmd.angular.z = 0.0
-            self.state_timer = 5
-            
-        # -----------------------------------------------------------
-        # [B] 생존 모드 (PC 신호 위험) -> 스마트 후진
-        # -----------------------------------------------------------
-        # [핵심] 통합 점수가 아니라 'PC 개별 점수'를 기준으로 판단
-        elif self.current_s_pc < 45.0:
-            
-            # B-1. 이미 후진 중인데 상황이 안 좋아짐 (Death Spiral 방지)
-            if not self.is_moving_forward and diff < -0.2:
-                self.get_logger().warn(f"🚫 후진 실패 (Diff {diff:.2f}). 비상 전진 전환!")
-                self.is_moving_forward = True # 전진으로 강제 전환
-                cmd.linear.x = 0.25 # 탈출 속도
-                cmd.angular.z = 0.0
-                self.action_state = 'ESCAPE_FWD'
-                self.state_timer = 8 # 길게 전진
-            
-            # B-2. 일반적인 위험 상황 -> 후진 시도
-            else:
-                self.get_logger().info(f"🚫 PC 신호 위험 ({self.current_s_pc:.1f}). 후진.")
-                self.is_moving_forward = False
-                cmd.linear.x = -0.15
-                cmd.angular.z = random.choice([0.1, -0.1]) # 직선에 가깝게 후진
-                self.action_state = 'BACKWARD'
-                self.state_timer = 3
+        
+        # 기본 가정: 이전 동작이 '전진'이었다고 가정하고 평가
+        # 노이즈를 고려하여 임계값(threshold) 설정 (0.0이 아니라 약간의 마진)
+        NOISE_MARGIN = 0.5 
 
-        # -----------------------------------------------------------
-        # [C] 아크 탐색 및 주행 (Forward)
-        # -----------------------------------------------------------
+        # 상황 1: 신호가 좋아지거나 유지됨 (Keep Going)
+        # 점수가 낮더라도 상승세라면 절대 멈추지 않음이 핵심
+        if diff >= -NOISE_MARGIN:
+            self.action_state = 'FORWARD_TRACKING'
+            cmd.linear.x = self.BASE_SPEED
+            
+            # 방향 미세 조정 (Gradient Ascent 가속)
+            # 신호가 확 좋아지면 속도를 조금 더 냄
+            if diff > 1.0:
+                cmd.linear.x = self.MAX_SPEED
+            
+            # 아주 약간의 조향을 섞어서 완만한 곡선을 그리며 탐색 (직선 고착 방지)
+            # 현재 스캔 방향으로 미세 회전
+            cmd.angular.z = 0.05 * self.scan_direction 
+
+            # 로그 간소화 (너무 자주 뜨지 않게)
+            if self.current_s_pc < 45.0 and diff > 0.5:
+                self.get_logger().info(f"✨ 신호 추적 중... (점수 {current_score:.1f} / 변화 +{diff:.2f})")
+
+        # 상황 2: 신호가 나빠짐 (Wrong Direction)
+        # 전진했더니 점수가 떨어짐 -> 이 방향 아님 -> 후진 후 방향 전환
         else:
-            self.is_moving_forward = True 
-            self.action_state = 'FORWARD'
-
-            if diff > 0.2:
-                # 신호 좋음
-                cmd.linear.x = self.BASE_SPEED + 0.05
-                cmd.angular.z = 0.3 * self.scan_direction
-                self.state_timer = 3
-
-            elif diff < -0.2:
-                # 방향 틀림 -> 아크 반전
-                self.scan_direction *= -1.0 
-                cmd.linear.x = 0.05 
-                cmd.angular.z = 0.8 * self.scan_direction
-                self.state_timer = 3
-
-            else:
-                # 탐색 지속
-                cmd.linear.x = self.BASE_SPEED
-                cmd.angular.z = 0.5 * self.scan_direction
-                self.state_timer = 2
+            self.get_logger().warn(f"📉 방향 이탈 (변화 {diff:.2f}). 재설정 시도.")
+            
+            # 2-1. 위치 복구 (Recovery)
+            # 잘못 간 만큼 살짝 뒤로 물러남 (신호가 좋았던 위치로 복귀)
+            cmd.linear.x = -0.15
+            cmd.angular.z = 0.0
+            
+            # 2-2. 다음 틱을 위해 회전 준비 (상태 타이머 설정)
+            # 이 함수가 다음 호출될 때(0.1초 뒤)가 아니라, 
+            # 지금 결정을 내려서 타이머를 걸어야 함.
+            
+            # 논리: 이번 틱은 '후진' 명령을 내리고, 
+            # 다음 몇 틱 동안은 '회전'을 하도록 유도해야 함.
+            # 하지만 단순화를 위해 여기서는 "일단 후진"만 수행하고
+            # 후진이 끝난 직후(다음 로직 진입 시) 회전하도록 플래그를 쓰거나,
+            # 랜덤 회전 + 후진을 섞음.
+            
+            # [수정된 전략] 제자리 회전은 RSSI 변화가 없으므로 
+            # "후진하면서 회전"하여 위치와 각도를 동시에 바꿈
+            turn_direction = random.choice([1.0, -1.0])
+            self.scan_direction = turn_direction # 다음 탐색 방향 결정
+            
+            cmd.linear.x = -0.10 # 천천히 후진
+            cmd.angular.z = 0.8 * turn_direction # 강하게 회전
+            
+            self.state_timer = 5 # 0.5초 동안 이 동작 수행 (후진+회전)
+            self.action_state = 'RECOVER_TURN'
+            
+            # 회전 후에는 이전 점수와의 비교가 무의미해질 수 있으므로
+            # 현재 점수를 기준점으로 재설정하는 효과
 
         self.last_cmd = cmd
         self.prev_score = current_score
