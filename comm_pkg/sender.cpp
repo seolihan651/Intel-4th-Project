@@ -101,6 +101,8 @@ static void drawTextTopRight(Mat& img, const string& text) {
 int main(int argc, char** argv) {
     string peerIp = (argc >= 2) ? argv[1] : DEFAULT_PEER_IP;
     int port      = (argc >= 3) ? atoi(argv[2]) : DEFAULT_PORT;
+    bool overlay = false;
+    for (int i=1;i<argc;i++) if (string(argv[i])=="--overlay") overlay=true;
 
     // UDP 소켓
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -163,8 +165,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        // 프레임에 RSSI 우상단 오버레이
-        drawTextTopRight(frame, rssiText);
+        // 프레임에 RSSI 우상단 오버레이(원하면 --overlay 옵션)
+        if (overlay) drawTextTopRight(frame, rssiText);
 
         // JPEG 인코딩
         vector<uchar> jpg;
@@ -198,13 +200,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        // 로그 (너무 과하면 주석)
-        // cout << "Frame " << frameId << " : " << totalLen << " bytes, chunks=" << chunkCount << "\n";
         frameId++;
 
-        // 로컬에서 보기 원하면 주석 해제(헤드리스면 유지)
-        // imshow("Sender Preview", frame);
-        // if (waitKey(1) == 'q') break;
     }
 
     close(sock);
