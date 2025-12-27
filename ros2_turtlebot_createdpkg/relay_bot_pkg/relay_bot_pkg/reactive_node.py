@@ -77,25 +77,41 @@ class ReactiveRelayBot(Node):
         self.is_moving_forward = True # [추가] 현재 이동 방향 기억 (True: 전진, False: 후진)
 
     def scan_callback(self, msg):
-        """ 장애물 감지 로직 (기존 유지) """
+        """ 
+        [수정됨] 장애물 회피 벡터 계산
+        단순 감지가 아니라, '어느 쪽으로 얼마나 피해야 하는지' 계산
+        """
         scan_ranges = msg.ranges
-        cleaned_ranges = [r if r > 0.0 else 10.0 for r in scan_ranges]
+        # 무한대(inf)나 0.0을 10.0으로 치환하여 계산 오류 방지
+        cleaned_ranges = [r if (r > 0.01 and r < 10.0) else 10.0 for r in scan_ranges]
         
+        # 1. 전방 거리 (충돌 방지용 급제동)
+        # 전방 60도(-30 ~ +30)의 최소거리
         front_ranges = cleaned_ranges[-30:] + cleaned_ranges[:30]
-        min_front_dist = min(front_ranges)
-        left_dist = min(cleaned_ranges[30:90])
-        right_dist = min(cleaned_ranges[270:330])
-
-        collision_threshold = 0.35
+        self.front_min_dist = min(front_ranges)
         
-        if min_front_dist < collision_threshold:
-            self.obstacle_detected = True
-            if left_dist > right_dist:
-                self.escape_direction = 0.5 
-            else:
-                self.escape_direction = -0.5
-        else:
-            self.obstacle_detected = False
+        # 2. 좌우 척력(Repulsive Force) 계산
+        # 왼쪽이 가까우면 오른쪽으로 회전력 발생 (음수), 오른쪽이 가까우면 왼쪽으로 (양수)
+        
+        # 좌측 90도 영역 (0 ~ 90) / 우측 90도 영역 (270 ~ 360)
+        left_ranges = cleaned_ranges[0:90]
+        right_ranges = cleaned_ranges[270:360]
+        
+        # 거리가 가까울수록 가중치를 높임 (1/distance)
+        # 평균 거리를 사용하여 노이즈를 줄임
+        avg_left = sum(left_ranges) / len(left_ranges)
+        avg_right = sum(right_ranges) / len(right_ranges)
+        
+        # [회피 벡터] 
+        # 왼쪽이 가까우면(작으면) -> 값 커짐 -> 오른쪽으로 가야 함(Minus Turn)
+        # 오른쪽이 가까우면(작으면) -> 값 커짐 -> 왼쪽으로 가야 함(Plus Turn)
+        
+        force_left = 1.0 / (avg_left + 0.1)  # 0.1은 분모 0 방지
+        force_right = 1.0 / (avg_right + 0.1)
+        
+        # 회피 가중치 (Gain): 장애물에 얼마나 민감하게 반응할지
+        AVOID_GAIN = 1.5
+        self.avoid_angular_z = (force_right - force_left) * AVOID_GAIN
 
     def calculate_quality(self):
         """ 
@@ -221,27 +237,41 @@ class ReactiveRelayBot(Node):
         self.last_cmd = cmd
         self.prev_score = current_score
         return cmd
-
-    def control_loop(self):
+def control_loop(self):
+        """
+        [수정됨] 벡터 합성 제어 (Vector Fusion)
+        최종 명령 = (RSSI 추적 벡터) + (장애물 회피 벡터)
+        """
         cmd = Twist()
-
-        # [우선순위 1] 장애물 회피
-        if self.obstacle_detected:
-            self.get_logger().info("🚧 장애물 회피 중")
-            cmd.linear.x = 0.0
-            cmd.angular.z = self.escape_direction
-            # 회피 중에는 이전 점수 리셋 (회피 후 엉뚱한 판단 방지)
-            self.prev_score = self.calculate_quality() 
-
-        # [우선순위 2] RSSI 추적
-        else:
-            rssi_cmd = self.get_rssi_command()
-            cmd.linear.x = rssi_cmd.linear.x 
-            cmd.angular.z = rssi_cmd.angular.z
         
-        # [안전 장치] 속도 제한 적용
-        cmd.linear.x = max(min(cmd.linear.x, self.MAX_SPEED), -self.MAX_SPEED)
-        cmd.angular.z = max(min(cmd.angular.z, self.MAX_ANGULAR_SPEED), -self.MAX_ANGULAR_SPEED)
+        # 1. 글로벌 플래너 (RSSI 추적 명령)
+        rssi_cmd = self.get_rssi_command()
+        
+        # 2. 벡터 합성 (Vector Addition)
+        # RSSI가 가고 싶은 회전 방향 + 장애물을 피해야 하는 회전 방향
+        final_angular_z = rssi_cmd.angular.z + self.avoid_angular_z
+        
+        # 3. 선속도 제어 (Smart Velocity)
+        # 장애물이 아주 가까우면 속도를 줄이고, 멀면 RSSI 명령을 따름
+        if self.front_min_dist < 0.4:
+            # [위험] 전방이 막힘 -> 제자리 회전 혹은 후진으로 전환
+            # RSSI고 뭐고 일단 살아야 함
+            final_linear_x = -0.05 
+            # 막혔을 때는 회피 벡터를 더 강하게 반영
+            final_angular_z = self.avoid_angular_z * 2.0 
+            if abs(final_angular_z) < 0.1: # 정면 벽이면 강제로 틂
+                 final_angular_z = 1.0 
+                 
+        elif self.front_min_dist < 0.7:
+            # [경고] 장애물 접근 중 -> 속도 줄이며 부드럽게 회피
+            final_linear_x = rssi_cmd.linear.x * 0.3
+        else:
+            # [안전] RSSI 명령대로 주행
+            final_linear_x = rssi_cmd.linear.x
+
+        # 4. 값 적용 및 제한 (Saturation)
+        cmd.linear.x = max(min(final_linear_x, self.MAX_SPEED), -self.MAX_SPEED)
+        cmd.angular.z = max(min(final_angular_z, self.MAX_ANGULAR_SPEED), -self.MAX_ANGULAR_SPEED)
 
         self.cmd_pub.publish(cmd)
     
