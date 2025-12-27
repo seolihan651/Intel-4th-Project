@@ -13,8 +13,8 @@ class MeshRssiPublisher(Node):
         # 터미널에서 'ip link' 또는 'ifconfig'로 확인한 HWaddr
         # ---------------------------------------------------------
         self.TARGET_MACS = {
-            'pc':  '00:00:00:00:00:00',  # <--- PC의 무선랜 MAC 주소로 변경!
-            'cam': '11:11:11:11:11:11'   # <--- BodyCam(RPi)의 무선랜 MAC 주소로 변경!
+            'pc':  '2c:cf:67:8c:2a:13',  # <--- PC의 무선랜 MAC 주소로 변경!
+            'cam': '2c:cf:67:8c:2a:13'   # <--- BodyCam(RPi)의 무선랜 MAC 주소로 변경!
         }
         
         # 인터페이스 이름 (보통 라즈베리파이는 wlan0)
