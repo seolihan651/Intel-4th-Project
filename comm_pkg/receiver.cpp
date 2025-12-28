@@ -250,7 +250,7 @@ int main(int argc, char** argv) {
     int reuse = 1;
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
-    int rcvbuf = 8 * 1024 * 1024;
+    int rcvbuf = 2 * 1024 * 1024;  // 8MB -> 2MB (지연/메모리 균형)
     setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 
     sockaddr_in myAddr{}, senderAddr{};
@@ -301,7 +301,7 @@ int main(int argc, char** argv) {
                 haveRoute = true;
                 hopMac = route.nexthop;
 
-               
+                // relay 정보는 2줄 오버레이에만 최소로 반영
                 string relay = (route.nexthop == route.originator) ? "direct" : ("via " + route.nexthop.substr(0, 8) + "..");
                 if (route.tq >= 0) line2 = "TQ: " + to_string(route.tq) + "/255 (" + relay + ")";
                 else line2 = "TQ: N/A (" + relay + ")";
@@ -310,12 +310,12 @@ int main(int argc, char** argv) {
             }
         }
 
-        //
+        // 2) route가 없으면 batctl n / iw dump로 1-hop 이웃 하나 선택
         if (hopMac.empty()) {
             hopMac = getBestNeighborMac();
             if (hopMac.empty()) hopMac = getFirstStationMac(phyIface);
             if (!hopMac.empty()) {
-               
+                // relay는 모르니 hop만 표기
                 line2 = "TQ: N/A (hop " + hopMac.substr(0, 8) + "..)";
             } else {
                 line2 = "TQ: N/A";
@@ -334,7 +334,7 @@ int main(int argc, char** argv) {
         ssize_t n = recvfrom(sock, buf.data(), buf.size(), 0, (sockaddr*)&senderAddr, &addrLen);
         if (n < 0) { perror("recvfrom"); continue; }
 
-       
+        // 0.5초마다 링크 상태 갱신
         auto now = chrono::steady_clock::now();
         auto ms = chrono::duration_cast<chrono::milliseconds>(now - lastStatusUpdate).count();
         if (ms > 500) {
@@ -342,7 +342,7 @@ int main(int argc, char** argv) {
             updateLinkStatus();
         }
 
-        // 
+        // 통짜 JPEG
         if (n >= 2 && buf[0] == 0xFF && buf[1] == 0xD8) {
             vector<uchar> data(buf.begin(), buf.begin() + n);
             Mat frame = imdecode(data, IMREAD_COLOR);
@@ -369,7 +369,7 @@ int main(int argc, char** argv) {
         if ((ssize_t)(sizeof(UdpChunkHeader) + plen) != n) continue;
         if (ccount == 0 || cid >= ccount) continue;
 
-      
+        // 너무 오래된 프레임 드롭(렉 누적 방지)
         if (latestShown > 0 && frameId + 50 < latestShown) continue;
 
         auto& fb = frames[frameId];
@@ -392,7 +392,7 @@ int main(int argc, char** argv) {
         recvCounter++;
         if ((recvCounter % 40) == 0) cleanupOld();
 
-       
+        // frame complete
         if (fb.gotCount == fb.chunkCount) {
             vector<uint8_t> jpg;
             size_t total = 0;
