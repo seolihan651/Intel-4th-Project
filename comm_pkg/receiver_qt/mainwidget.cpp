@@ -1,47 +1,27 @@
 #include "mainwidget.h"
 #include "ui_mainwidget.h"
 
+#include <QVBoxLayout>
+
 MainWidget::MainWidget(QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::MainWidget)
 {
     ui->setupUi(this);
-    //pTab1DevControl = new Tab1DevControl(ui->pTab1);
-    //ui->pTab1->setLayout(pTab1DevControl->layout());
-    int idx = ui->pTabWidget->indexOf(ui->pTab1);
-    ui->pTabWidget->setTabEnabled(idx, false);
 
-    pTab2SocketClient = new Tab2SocketClient(ui->pTab2);
-    ui->pTab2->setLayout(pTab2SocketClient->layout());
+    // Tab7CamViewer를 메인 위젯에 바로 붙이기
+    pTab7CamViewer = new Tab7CamViewer(this);
 
-    pTab3ControlPannel = new Tab3ControlPannel(ui->pTab3);
-    ui->pTab3->setLayout(pTab3ControlPannel->layout());
+    auto *lay = new QVBoxLayout(this);
+    lay->setContentsMargins(0,0,0,0);
+    lay->setSpacing(0);
+    lay->addWidget(pTab7CamViewer);
 
-    pTab4SensorChart = new Tab4SensorChart(ui->pTab4);
-    ui->pTab4->setLayout(pTab4SensorChart->layout());
+    setLayout(lay);
 
-    pTab5SensorDatabase = new Tab5SensorDatabase(ui->pTab5);
-    ui->pTab5->setLayout(pTab5SensorDatabase->layout());
-
-    //pTab6WebCamera = new Tab6WebCamera(ui->pTab6);
-    //ui->pTab6->setLayout(pTab6WebCamera->layout());
-
-    pTab7CamViewer = new Tab7CamViewer(ui->pTab7);
-    ui->pTab7->setLayout(pTab7CamViewer->layout());
-
-    ui->pTabWidget->setCurrentIndex(6);
-
-    //connect(pTab2SocketClient, SIGNAL(ledWriteSig(int)), pTab1DevControl->getpLedKeyDev(), SLOT(writeLedDataSlot(int)));
-    //connect(pTab1DevControl, SIGNAL(sendKeySig(int)), pTab2SocketClient,SLOT(sendKeyDataSlot(int)));
-    connect(pTab3ControlPannel, SIGNAL(socketSendDataSig(QString)), pTab2SocketClient, SLOT(sendSocketDataSlot(QString)));
-    connect(pTab2SocketClient, SIGNAL(tab3RecvDataSig(QString)), pTab3ControlPannel, SLOT(tab3RecvDataSlot(QString)));
-    connect(pTab2SocketClient, SIGNAL(tab4RecvDataSig(QString)), pTab4SensorChart, SLOT(tab4RecvDataSlot(QString)));
-    connect(pTab2SocketClient, SIGNAL(tab5RecvDataSig(QString)), pTab5SensorDatabase, SLOT(tab5RecvDataSlot(QString)));
-    //connect(pTab2SocketClient, SIGNAL(mainWidgetRecvDataSig(int)), ui->pTabWidget, SLOT(setCurrentIndex(int)));
-    connect(pTab2SocketClient, SIGNAL(tab7RecvDataSig(QString)), pTab7CamViewer, SLOT(tab7RecvDataSlot(QString)));
-    //connect(pTab7CamViewer->getpWebCamThread(),SIGNAL(sendSocketDataSig(QString)),pTab2SocketClient,SLOT(sendSocketDataSlot(QString)));
+    // ✅ Tab2SocketClient가 없으니 connect 제거
+    // connect(pTab2SocketClient, SIGNAL(tab7RecvDataSig(QString)), pTab7CamViewer, SLOT(tab7RecvDataSlot(QString)));
 }
-
 
 MainWidget::~MainWidget()
 {

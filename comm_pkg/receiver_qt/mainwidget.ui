@@ -17,38 +17,8 @@
    <item>
     <widget class="QTabWidget" name="pTabWidget">
      <property name="currentIndex">
-      <number>6</number>
+      <number>0</number>
      </property>
-     <widget class="QWidget" name="pTab1">
-      <attribute name="title">
-       <string>Tab 1</string>
-      </attribute>
-     </widget>
-     <widget class="QWidget" name="pTab2">
-      <attribute name="title">
-       <string>Tab 2</string>
-      </attribute>
-     </widget>
-     <widget class="QWidget" name="pTab3">
-      <attribute name="title">
-       <string>Tab 3</string>
-      </attribute>
-     </widget>
-     <widget class="QWidget" name="pTab4">
-      <attribute name="title">
-       <string>Tab4</string>
-      </attribute>
-     </widget>
-     <widget class="QWidget" name="pTab5">
-      <attribute name="title">
-       <string>Tab5</string>
-      </attribute>
-     </widget>
-     <widget class="QWidget" name="pTab6">
-      <attribute name="title">
-       <string>Tab6</string>
-      </attribute>
-     </widget>
      <widget class="QWidget" name="pTab7">
       <attribute name="title">
        <string>Tab7</string>

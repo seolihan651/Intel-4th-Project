@@ -13,11 +13,20 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <errno.h>
 
 using namespace std;
 
-static const int BUF_SIZE = 65536;
-static const uint32_t MAGIC = 0xA0B0C0D0;
+namespace {
+constexpr int BUF_SIZE = 65536;
+constexpr uint32_t MAGIC = 0xA0B0C0D0;
+
+// receiver_fixed_tuned 튜닝 반영
+constexpr int RCVBUF_BYTES = 2 * 1024 * 1024;    // 2MB
+constexpr int LINK_UPDATE_MS = 500;             // 0.5초
+constexpr int EMIT_MIN_MS = 40;                 // 25fps 제한
+constexpr int FRAME_TIMEOUT_MS = 350;
+constexpr size_t MAX_INFLIGHT_FRAMES = 32;
 
 #pragma pack(push, 1)
 struct UdpChunkHeader {
@@ -81,6 +90,7 @@ static bool getRssiDbmFromStation(const string& iface, const string& mac, int& d
     return false;
 }
 
+// iw station dump에서 첫 번째 Station MAC 가져오기(최후의 fallback)
 static string getFirstStationMac(const string& iface) {
     string dump = runCmd("iw dev " + iface + " station dump 2>/dev/null");
     if (dump.empty()) return "";
@@ -99,6 +109,7 @@ struct BatRoute {
     int tq = -1; // 0..255
 };
 
+// batctl o에서 특정 originator 경로 파싱
 static BatRoute getBatRouteToOriginator(const string& originatorMac) {
     BatRoute r;
     r.originator = originatorMac;
@@ -143,6 +154,7 @@ static BatRoute getBatRouteToOriginator(const string& originatorMac) {
     return r;
 }
 
+// batctl n에서 last-seen 최소(=가장 최근) 이웃 MAC 찾기
 static string getBestNeighborMac() {
     string out = runCmd("batctl n 2>/dev/null");
     if (out.empty()) return "";
@@ -169,6 +181,7 @@ static string getBestNeighborMac() {
     return bestMac;
 }
 
+// ---- minimal overlay (top-left only) ----
 static void drawLabelTopLeft(cv::Mat& img, const string& l1, const string& l2) {
     double fontScale = 0.8;
     int thickness = 2;
@@ -202,6 +215,7 @@ struct FrameBuf {
     int gotCount = 0;
     chrono::steady_clock::time_point t0;
 };
+} // namespace
 
 // ----------------- MeshRxThread -----------------
 MeshRxThread::MeshRxThread(QObject *parent)
@@ -231,7 +245,8 @@ void MeshRxThread::run()
     int reuse = 1;
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
-    int rcvbuf = 8 * 1024 * 1024;
+    // receiver_fixed_tuned 튜닝: RCVBUF 2MB
+    int rcvbuf = RCVBUF_BYTES;
     setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 
     // stop 빨리 먹게 recv timeout
@@ -251,16 +266,11 @@ void MeshRxThread::run()
         return;
     }
 
-    // 드롭/정리 파라미터
-    const int FRAME_TIMEOUT_MS = 350;
-    const size_t MAX_INFLIGHT_FRAMES = 32;
-    uint32_t latestShown = 0;
-
     unordered_map<uint32_t, FrameBuf> frames;
     vector<uint8_t> buf(BUF_SIZE);
     socklen_t addrLen = sizeof(senderAddr);
 
-    string hopMac = "";
+    string hopMac;
     int hopRssiDbm = 0;
     BatRoute route;
 
@@ -288,9 +298,11 @@ void MeshRxThread::run()
             return;
         }
 
+        // receiver_fixed_tuned 로직 그대로 반영
         hopMac.clear();
         route = BatRoute{};
 
+        // 1) originatorMac 있으면 batctl o로 nexthop/TQ 확보
         if (!originatorMac.empty() && isMac(originatorMac)) {
             route = getBatRouteToOriginator(originatorMac);
             if (route.ok) {
@@ -304,6 +316,7 @@ void MeshRxThread::run()
             }
         }
 
+        // 2) route 없으면 batctl n / iw dump로 1-hop 이웃 하나 선택
         if (hopMac.empty()) {
             hopMac = getBestNeighborMac();
             if (hopMac.empty()) hopMac = getFirstStationMac(phyIface);
@@ -311,33 +324,37 @@ void MeshRxThread::run()
             else line2 = "TQ: N/A";
         }
 
+        // 3) RSSI는 hopMac 기준
         bool ok = (!hopMac.empty()) && getRssiDbmFromStation(phyIface, hopMac, hopRssiDbm);
         if (ok) line1 = "HOP RSSI: " + to_string(hopRssiDbm) + " dBm";
         else    line1 = "HOP RSSI: N/A";
     };
 
-    // ✅ 장시간 안정용: 링크 갱신은 run 루프에서 1초 주기
     auto lastLinkUpdate = chrono::steady_clock::now() - chrono::seconds(10);
-
-    // ✅ UI 과부하 방지: 프레임 emit 20~30fps 제한 (여기선 25fps ≈ 40ms)
     auto lastEmit = chrono::steady_clock::now() - chrono::milliseconds(100);
 
+    uint32_t latestShown = 0;
     uint32_t recvCounter = 0;
 
     while (camViewFlag.load()) {
-        // 1초마다 링크 갱신
+        // receiver_fixed_tuned 튜닝: 0.5초마다 링크 갱신
         auto now = chrono::steady_clock::now();
-        if (chrono::duration_cast<chrono::milliseconds>(now - lastLinkUpdate).count() >= 1000) {
+        if (chrono::duration_cast<chrono::milliseconds>(now - lastLinkUpdate).count() >= LINK_UPDATE_MS) {
             updateLinkStatus();
             lastLinkUpdate = now;
         }
 
         ssize_t n = recvfrom(sock, buf.data(), buf.size(), 0, (sockaddr*)&senderAddr, &addrLen);
-        if (n < 0) continue;
+        if (n < 0) {
+            // timeout(EAGAIN/EWOULDBLOCK)은 정상 -> 계속
+            if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+            // 그 외 에러는 로그만 찍고 계속(일시적일 수 있음)
+            // perror("recvfrom");
+            continue;
+        }
 
-        // 통짜 JPEG도 대응
         auto emitFrame = [&](cv::Mat &bgr) {
-            // snapshot용 최신 프레임 저장 (스레드 안전)
+            // snapshot용 최신 프레임 저장
             {
                 QMutexLocker lk(&frameMtx);
                 lastFrameBgr = bgr.clone();
@@ -345,9 +362,9 @@ void MeshRxThread::run()
 
             drawLabelTopLeft(bgr, line1, line2);
 
-            // emit fps 제한
+            // emit fps 제한(25fps)
             auto tnow = chrono::steady_clock::now();
-            if (chrono::duration_cast<chrono::milliseconds>(tnow - lastEmit).count() < 40) {
+            if (chrono::duration_cast<chrono::milliseconds>(tnow - lastEmit).count() < EMIT_MIN_MS) {
                 return;
             }
             lastEmit = tnow;
@@ -356,10 +373,11 @@ void MeshRxThread::run()
             cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
             QImage qimg(rgb.data, rgb.cols, rgb.rows, (int)rgb.step, QImage::Format_RGB888);
 
-            // ✅ copy()로 메모리 소유권 분리 (매우 중요)
+            // 매우 중요: Mat 메모리와 분리
             emit frameReady(qimg.copy());
         };
 
+        // 통짜 JPEG도 대응
         if (n >= 2 && buf[0] == 0xFF && buf[1] == 0xD8) {
             vector<uchar> data(buf.begin(), buf.begin() + n);
             cv::Mat frame = cv::imdecode(data, cv::IMREAD_COLOR);
@@ -382,6 +400,7 @@ void MeshRxThread::run()
         if ((ssize_t)(sizeof(UdpChunkHeader) + plen) != n) continue;
         if (ccount == 0 || cid >= ccount) continue;
 
+        // 너무 오래된 프레임 드롭(렉 누적 방지)
         if (latestShown > 0 && frameId + 50 < latestShown) continue;
 
         auto& fb = frames[frameId];
@@ -404,6 +423,7 @@ void MeshRxThread::run()
         recvCounter++;
         if ((recvCounter % 40) == 0) cleanupOld();
 
+        // frame complete
         if (fb.gotCount == fb.chunkCount) {
             vector<uint8_t> jpg;
             size_t total = 0;
