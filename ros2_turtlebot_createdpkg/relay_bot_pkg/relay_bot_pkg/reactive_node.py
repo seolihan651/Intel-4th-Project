@@ -70,35 +70,53 @@ class ReactiveRelayBot(Node):
         self.last_cmd = Twist()   # 이전 명령 저장용
         
         # 기본 주행 파라미터
-        self.BASE_SPEED = 0.15
+        self.BASE_SPEED = 0.1
         self.MAX_SPEED = 0.22
-        self.scan_direction = 1.0
+        self.MAX_ANGULAR_SPEED = 1.0 # 최대 회전 속도 추가
+        self.scan_direction = 1.0 
+        self.is_moving_forward = True # [추가] 현재 이동 방향 기억 (True: 전진, False: 후진)
 
     def scan_callback(self, msg):
-        """ 장애물 감지 로직 (기존 유지) """
+        """ 
+        [수정됨] 장애물 회피 벡터 계산
+        단순 감지가 아니라, '어느 쪽으로 얼마나 피해야 하는지' 계산
+        """
         scan_ranges = msg.ranges
-        cleaned_ranges = [r if r > 0.0 else 10.0 for r in scan_ranges]
+        # 무한대(inf)나 0.0을 10.0으로 치환하여 계산 오류 방지
+        cleaned_ranges = [r if (r > 0.01 and r < 10.0) else 10.0 for r in scan_ranges]
         
+        # 1. 전방 거리 (충돌 방지용 급제동)
+        # 전방 60도(-30 ~ +30)의 최소거리
         front_ranges = cleaned_ranges[-30:] + cleaned_ranges[:30]
-        min_front_dist = min(front_ranges)
-        left_dist = min(cleaned_ranges[30:90])
-        right_dist = min(cleaned_ranges[270:330])
-
-        collision_threshold = 0.35
+        self.front_min_dist = min(front_ranges)
         
-        if min_front_dist < collision_threshold:
-            self.obstacle_detected = True
-            if left_dist > right_dist:
-                self.escape_direction = 0.5 
-            else:
-                self.escape_direction = -0.5
-        else:
-            self.obstacle_detected = False
+        # 2. 좌우 척력(Repulsive Force) 계산
+        # 왼쪽이 가까우면 오른쪽으로 회전력 발생 (음수), 오른쪽이 가까우면 왼쪽으로 (양수)
+        
+        # 좌측 90도 영역 (0 ~ 90) / 우측 90도 영역 (270 ~ 360)
+        left_ranges = cleaned_ranges[0:90]
+        right_ranges = cleaned_ranges[270:360]
+        
+        # 거리가 가까울수록 가중치를 높임 (1/distance)
+        # 평균 거리를 사용하여 노이즈를 줄임
+        avg_left = sum(left_ranges) / len(left_ranges)
+        avg_right = sum(right_ranges) / len(right_ranges)
+        
+        # [회피 벡터] 
+        # 왼쪽이 가까우면(작으면) -> 값 커짐 -> 오른쪽으로 가야 함(Minus Turn)
+        # 오른쪽이 가까우면(작으면) -> 값 커짐 -> 왼쪽으로 가야 함(Plus Turn)
+        
+        force_left = 1.0 / (avg_left + 0.1)  # 0.1은 분모 0 방지
+        force_right = 1.0 / (avg_right + 0.1)
+        
+        # 회피 가중치 (Gain): 장애물에 얼마나 민감하게 반응할지
+        AVOID_GAIN = 1.5
+        self.avoid_angular_z = (force_right - force_left) * AVOID_GAIN
 
     def calculate_quality(self):
         """ 
-        [PC 우선순위 강화 버전] 
-        PC 신호가 생존선(Safety Line)을 넘지 못하면 카메라는 쳐다보지도 않음
+        [수정됨] 목줄(Leash) 기능 추가
+        PC 신호가 끊어질 위험이 있으면 점수를 급격히 낮춰 복귀를 강제함
         """
         def to_score(rssi):
             if rssi >= -30: return 100.0
@@ -107,139 +125,154 @@ class ReactiveRelayBot(Node):
 
         s_pc = to_score(self.rssi_pc)
         s_cam = to_score(self.rssi_cam)
-
-        # -------------------------------------------------------------
-        # 1. [최우선] PC 생존선 검사 (Survival Mode)
-        # -------------------------------------------------------------
-        # PC 점수가 45점(약 -72dBm) 미만이면 '비상 복귀' 모드
-        if s_pc < 45.0:
-            # s_cam 값은 완전히 무시합니다.
-            # 0.5를 곱하는 이유: 점수를 의도적으로 낮게 만들어(최대 22.5점), 
-            # 로봇이 "지금 상태가 매우 나쁘다"고 느끼게 하여 개선 의지를 높임
-            return s_pc * 0.5 
-
-        # -------------------------------------------------------------
-        # 2. [차순위] 카메라 신호 관리 (Service Mode)
-        # -------------------------------------------------------------
-        # PC는 안전하므로(45점 이상), 이제 카메라 신호가 약한지 봅니다.
-        if s_cam < 40.0:
-            # PC는 괜찮은데 카메라가 끊길 것 같으면, 카메라 쪽으로 이동
-            return s_cam * 0.8 
         
-        # -------------------------------------------------------------
-        # 3. [안전 구역] 위치 최적화 (Safe Zone)
-        # -------------------------------------------------------------
-        # 둘 다 신호가 충분한 경우입니다.
-        # 여기서 PC 쪽에 가중치를 더 주면(0.7), 로봇이 PC 쪽에 더 가깝게 머뭅니다.
-        # (PC: 70%, CAM: 30% 비중)
-        return (s_pc * 0.7) + (s_cam * 0.3)
+        self.current_s_pc = s_pc 
+        
+        # ---------------------------------------------------------
+        # 1. 목줄 (The Leash) - 안전장치
+        # ---------------------------------------------------------
+        # PC RSSI가 -65dBm 보다 낮아지면(더 나빠지면) 비상 상황으로 간주
+        # 끊어지기 직전(-70dBm)보다 약간 여유를 둠 (-65dBm)
+        SAFE_THRESHOLD = -65.0 
+        
+        if self.rssi_pc < SAFE_THRESHOLD:
+            # 점수를 음수로 만들어버림 -> 이전 점수(양수)와의 차이(Diff)가 
+            # 거대한 마이너스 값이 됨 -> 로봇은 '급락(Sudden Drop)'으로 인식하고 반전(Invert) 수행
+            return -100.0 
+
+        # ---------------------------------------------------------
+        # 2. 안전 구역 내에서의 행동 (PC <-> CAM 균형 탐색)
+        # ---------------------------------------------------------
+        # PC 신호가 안전하다면, CAM 신호를 찾아 멀리 나가는 것을 허용
+        # min() 함수를 사용하여 두 신호의 균형점을 찾음
+        final_score = min(s_pc, s_cam)
+        
+        # 약간의 탐색 동력
+        final_score = final_score * 0.9 + (s_pc + s_cam) * 0.05
+        
+        return final_score
+    
     def get_rssi_command(self):
         cmd = Twist()
         
-        # 1. RSSI 점수 및 변화량 계산
+        # 1. 점수 계산 및 델타 확인
         current_score = self.calculate_quality()
         diff = current_score - self.prev_score
         
-        # 2. 목표 도달 시 정지
-        if current_score > 90.0:
+        # [목표 도달] 점수가 충분히 높으면 정지 (사용자 요청 반영)
+        if current_score > 55.0:
+            self.get_logger().info(f"✅ 목표 신호 도달! (점수: {current_score:.1f})")
             self.last_cmd = Twist()
             return cmd
 
-        # 3. 상태 유지 타이머 처리
+        # [상태 유지 타이머] 회전이나 후진 동작을 일정 시간 수행하기 위함
         if self.state_timer > 0:
             self.state_timer -= 1
             cmd = self.last_cmd
+            # 상태가 바뀌는 순간에 prev_score 갱신을 막기 위해 여기서 리턴
+            # (단, 회전 중에는 RSSI 변화가 없으므로 점수 로직에 영향 없음)
+            return cmd 
+
+        # -----------------------------------------------------------
+        # [A] 탐색 로직 (State Machine)
+        # -----------------------------------------------------------
         
+        # 기본 가정: 이전 동작이 '전진'이었다고 가정하고 평가
+        # 노이즈를 고려하여 임계값(threshold) 설정 (0.0이 아니라 약간의 마진)
+        NOISE_MARGIN = 0.5 
+
+        # 상황 1: 신호가 좋아지거나 유지됨 (Keep Going)
+        # 점수가 낮더라도 상승세라면 절대 멈추지 않음이 핵심
+        if diff >= -NOISE_MARGIN:
+            self.action_state = 'FORWARD_TRACKING'
+            cmd.linear.x = self.BASE_SPEED
+            
+            # 방향 미세 조정 (Gradient Ascent 가속)
+            # 신호가 확 좋아지면 속도를 조금 더 냄
+            if diff > 1.0:
+                cmd.linear.x = self.MAX_SPEED
+            
+            # 아주 약간의 조향을 섞어서 완만한 곡선을 그리며 탐색 (직선 고착 방지)
+            # 현재 스캔 방향으로 미세 회전
+            cmd.angular.z = 0.05 * self.scan_direction 
+
+            # 로그 간소화 (너무 자주 뜨지 않게)
+            if self.current_s_pc < 45.0 and diff > 0.5:
+                self.get_logger().info(f"✨ 신호 추적 중... (점수 {current_score:.1f} / 변화 +{diff:.2f})")
+
+        # 상황 2: 신호가 나빠짐 (Wrong Direction)
+        # 전진했더니 점수가 떨어짐 -> 이 방향 아님 -> 후진 후 방향 전환
         else:
-            # -----------------------------------------------------------
-            # [A] 비상 후진 (Emergency) - 점수가 너무 낮을 때
-            # -----------------------------------------------------------
-            if current_score < 40.0:
-                self.get_logger().warn(f"🚫 비상! 점수 저조 ({current_score:.1f}). 후진.")
-                cmd.linear.x = -0.15 # 확실한 후진
-                cmd.angular.z = 0.0
-                self.state_timer = 5
-                self.action_state = 'SEARCH' # 후진 후 탐색 모드로
+            self.get_logger().warn(f"📉 방향 이탈 (변화 {diff:.2f}). 재설정 시도.")
+            
+            # 2-1. 위치 복구 (Recovery)
+            # 잘못 간 만큼 살짝 뒤로 물러남 (신호가 좋았던 위치로 복귀)
+            cmd.linear.x = -0.15
+            cmd.angular.z = 0.0
+            
+            # 2-2. 다음 틱을 위해 회전 준비 (상태 타이머 설정)
+            # 이 함수가 다음 호출될 때(0.1초 뒤)가 아니라, 
+            # 지금 결정을 내려서 타이머를 걸어야 함.
+            
+            # 논리: 이번 틱은 '후진' 명령을 내리고, 
+            # 다음 몇 틱 동안은 '회전'을 하도록 유도해야 함.
+            # 하지만 단순화를 위해 여기서는 "일단 후진"만 수행하고
+            # 후진이 끝난 직후(다음 로직 진입 시) 회전하도록 플래그를 쓰거나,
+            # 랜덤 회전 + 후진을 섞음.
+            
+            # [수정된 전략] 제자리 회전은 RSSI 변화가 없으므로 
+            # "후진하면서 회전"하여 위치와 각도를 동시에 바꿈
+            turn_direction = random.choice([1.0, -1.0])
+            self.scan_direction = turn_direction # 다음 탐색 방향 결정
+            
+            cmd.linear.x = -0.10 # 천천히 후진
+            cmd.angular.z = 0.8 * turn_direction # 강하게 회전
+            
+            self.state_timer = 5 # 0.5초 동안 이 동작 수행 (후진+회전)
+            self.action_state = 'RECOVER_TURN'
+            
+            # 회전 후에는 이전 점수와의 비교가 무의미해질 수 있으므로
+            # 현재 점수를 기준점으로 재설정하는 효과
 
-            # -----------------------------------------------------------
-            # [B] 아크 탐색 (Arc Search) - 신호가 애매하거나 하락세일 때
-            # -----------------------------------------------------------
-            # 반원을 그리며(이동하며) 신호 변화를 측정합니다.
-            elif self.action_state == 'SEARCH' or current_score < 55.0:
-                
-                # B-1. 신호가 확실히 좋아짐 (찾았다!)
-                if diff > 0.5: 
-                    self.get_logger().info(f"✨ 경로 발견! ({self.scan_direction} 방향)")
-                    # 가속하며 해당 방향으로 주행 전환
-                    cmd.linear.x = self.BASE_SPEED
-                    cmd.angular.z = 0.3 * self.scan_direction 
-                    self.action_state = 'FORWARD'
-                    self.state_timer = 5
-
-                # B-2. 신호가 계속 나빠짐 (여기가 아닌가봐)
-                elif diff < -0.2:
-                    self.get_logger().info("↩️ 방향 전환 (Arc Flip)")
-                    self.scan_direction *= -1.0 # 반대 방향으로 아크 뒤집기
-                    
-                    # 방향을 바꿀 때는 제자리에서 살짝 돌려줌 (즉각 반응)
-                    cmd.linear.x = 0.0
-                    cmd.angular.z = 0.8 * self.scan_direction
-                    self.state_timer = 2
-                
-                # B-3. 탐색 진행 (천천히 움직이며 데이터 수집)
-                else:
-                    self.get_logger().info(f"📡 아크 탐색 중... ({current_score:.1f})")
-                    # [핵심] 위치를 바꾸기 위해 전진 성분을 섞음
-                    cmd.linear.x = 0.08  # 천천히 전진
-                    cmd.angular.z = 0.6 * self.scan_direction # 강하게 회전
-                    self.state_timer = 2 # 짧게 끊어서 자주 판단
-
-            # -----------------------------------------------------------
-            # [C] 일반 주행 (FORWARD)
-            # -----------------------------------------------------------
-            else: # action_state == 'FORWARD' (점수 양호)
-                self.action_state = 'FORWARD'
-                
-                if diff > 0:
-                    # 신호 좋음: 속도 높여서 직진
-                    cmd.linear.x = self.BASE_SPEED + 0.05
-                    cmd.angular.z = 0.0
-                    self.state_timer = 3
-                
-                elif diff > -1.5:
-                    # 신호 유지: 완만한 커브로 넓게 이동
-                    cmd.linear.x = self.BASE_SPEED
-                    cmd.angular.z = random.choice([0.2, -0.2])
-                    self.state_timer = 5
-                
-                else:
-                    # 신호 급락: 즉시 탐색 모드 전환
-                    self.get_logger().info("📉 신호 유실 감지. 아크 탐색 시작.")
-                    self.action_state = 'SEARCH'
-                    self.state_timer = 0
-
-            self.last_cmd = cmd
-
+        self.last_cmd = cmd
         self.prev_score = current_score
         return cmd
-
-    def control_loop(self):
+def control_loop(self):
+        """
+        [수정됨] 벡터 합성 제어 (Vector Fusion)
+        최종 명령 = (RSSI 추적 벡터) + (장애물 회피 벡터)
+        """
         cmd = Twist()
-
-        # [우선순위 1] 장애물 회피
-        if self.obstacle_detected:
-            self.get_logger().info("🚧 장애물 회피 중")
-            cmd.linear.x = 0.0
-            cmd.angular.z = self.escape_direction
-            # 회피 중에는 이전 점수 리셋 (회피 후 엉뚱한 판단 방지)
-            self.prev_score = self.calculate_quality() 
-
-        # [우선순위 2] RSSI 추적
-        else:
-            rssi_cmd = self.get_rssi_command()
-            cmd.linear.x = rssi_cmd.linear.x * 1.5
-            cmd.angular.z = rssi_cmd.angular.z
         
+        # 1. 글로벌 플래너 (RSSI 추적 명령)
+        rssi_cmd = self.get_rssi_command()
+        
+        # 2. 벡터 합성 (Vector Addition)
+        # RSSI가 가고 싶은 회전 방향 + 장애물을 피해야 하는 회전 방향
+        final_angular_z = rssi_cmd.angular.z + self.avoid_angular_z
+        
+        # 3. 선속도 제어 (Smart Velocity)
+        # 장애물이 아주 가까우면 속도를 줄이고, 멀면 RSSI 명령을 따름
+        if self.front_min_dist < 0.4:
+            # [위험] 전방이 막힘 -> 제자리 회전 혹은 후진으로 전환
+            # RSSI고 뭐고 일단 살아야 함
+            final_linear_x = -0.05 
+            # 막혔을 때는 회피 벡터를 더 강하게 반영
+            final_angular_z = self.avoid_angular_z * 2.0 
+            if abs(final_angular_z) < 0.1: # 정면 벽이면 강제로 틂
+                 final_angular_z = 1.0 
+                 
+        elif self.front_min_dist < 0.7:
+            # [경고] 장애물 접근 중 -> 속도 줄이며 부드럽게 회피
+            final_linear_x = rssi_cmd.linear.x * 0.3
+        else:
+            # [안전] RSSI 명령대로 주행
+            final_linear_x = rssi_cmd.linear.x
+
+        # 4. 값 적용 및 제한 (Saturation)
+        cmd.linear.x = max(min(final_linear_x, self.MAX_SPEED), -self.MAX_SPEED)
+        cmd.angular.z = max(min(final_angular_z, self.MAX_ANGULAR_SPEED), -self.MAX_ANGULAR_SPEED)
+
         self.cmd_pub.publish(cmd)
     
     def rssi_pc_callback(self, msg):

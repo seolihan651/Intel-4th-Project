@@ -1,3 +1,5 @@
+import os
+from glob import glob
 from setuptools import find_packages, setup
 
 package_name = 'relay_bot_pkg'
@@ -10,6 +12,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -25,7 +28,7 @@ setup(
     entry_points={
         'console_scripts': [
             'relay_bot = relay_bot_pkg.reactive_node:main',
-            'rssi_sim = relay_bot_pkg.rssi_simulator:main',
+            'mesh_rssi_publisher = relay_bot_pkg.mesh_rssi_publisher:main',
             'twist_rssi_sim = relay_bot_pkg.rssi_simulator_twist:main',
         ],
     },
