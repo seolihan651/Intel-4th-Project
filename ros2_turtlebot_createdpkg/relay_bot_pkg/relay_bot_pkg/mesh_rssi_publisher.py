@@ -14,7 +14,7 @@ class MeshRssiPublisher(Node):
         # ---------------------------------------------------------
         self.TARGET_MACS = {
             'pc':  '2c:cf:67:8c:2a:13',  # <--- PC의 무선랜 MAC 주소로 변경!
-            'cam': '2c:cf:67:8c:2a:13'   # <--- BodyCam(RPi)의 무선랜 MAC 주소로 변경!
+            'cam': '2c:cf:67:8c:29:c8'   # <--- BodyCam(RPi)의 무선랜 MAC 주소로 변경!
         }
         
         # 인터페이스 이름 (보통 라즈베리파이는 wlan0)

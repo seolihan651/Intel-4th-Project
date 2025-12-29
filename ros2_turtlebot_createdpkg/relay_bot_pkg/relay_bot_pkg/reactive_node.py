@@ -155,91 +155,105 @@ class ReactiveRelayBot(Node):
         
         return final_score
     
+
     def get_rssi_command(self):
         cmd = Twist()
         
-        # 1. 점수 계산 및 델타 확인
+        # 1. 점수 계산
         current_score = self.calculate_quality()
         diff = current_score - self.prev_score
         
-        # [목표 도달] 점수가 충분히 높으면 정지 (사용자 요청 반영)
-        if current_score > 55.0:
-            self.get_logger().info(f"✅ 목표 신호 도달! (점수: {current_score:.1f})")
+        # [목표 도달]
+        if current_score > 85.0:
             self.last_cmd = Twist()
             return cmd
 
-        # [상태 유지 타이머] 회전이나 후진 동작을 일정 시간 수행하기 위함
+        # -----------------------------------------------------------
+        # [상태 머신] Pivot & Probe 시퀀스 제어
+        # -----------------------------------------------------------
         if self.state_timer > 0:
             self.state_timer -= 1
-            cmd = self.last_cmd
-            # 상태가 바뀌는 순간에 prev_score 갱신을 막기 위해 여기서 리턴
-            # (단, 회전 중에는 RSSI 변화가 없으므로 점수 로직에 영향 없음)
-            return cmd 
+            
+            # [단계 1] 제자리 회전 (Pivot Turn)
+            # 지형지물에 걸리지 않도록 선속도를 0으로 하고 회전만 수행
+            if self.action_state == 'PIVOT_TURN':
+                cmd.linear.x = 0.0
+                cmd.angular.z = self.stored_turn_speed # 저장된 방향으로 회전
+                
+                # 회전 타이머가 끝나면 -> 즉시 '직진 탐색' 모드로 전환 (연계 동작)
+                if self.state_timer == 0:
+                    self.action_state = 'STRAIGHT_PROBE'
+                    self.state_timer = 15  # 1.5초 동안 직진 예약
+                    self.get_logger().info("🚀 각도 변경 완료. 직진 탐색(Probe) 시작.")
+                
+                return cmd
+
+            # [단계 2] 직선 탐색 (Straight Probe)
+            # 변경된 각도로 일정 거리를 이동해봐야 신호 변화를 알 수 있음
+            elif self.action_state == 'STRAIGHT_PROBE':
+                # 안전장치: 탐색 중이라도 신호가 급락하면 즉시 중단
+                if diff < -5.0:
+                    self.get_logger().warn(f"🚫 탐색 중 급락! ({diff:.2f}) 중단.")
+                    self.state_timer = 0
+                    return self.last_cmd
+                
+                cmd.linear.x = 0.20  # 과감하게 전진
+                cmd.angular.z = 0.0  # 회전 없이 직진만
+                self.last_cmd = cmd
+                return cmd
+                
+            # 그 외 상태 (후진 등)
+            else:
+                return self.last_cmd
 
         # -----------------------------------------------------------
-        # [A] 탐색 로직 (State Machine)
+        # [A] 판단 로직 (Evaluation)
         # -----------------------------------------------------------
         
-        # 기본 가정: 이전 동작이 '전진'이었다고 가정하고 평가
-        # 노이즈를 고려하여 임계값(threshold) 설정 (0.0이 아니라 약간의 마진)
         NOISE_MARGIN = 0.5 
 
         # 상황 1: 신호가 좋아지거나 유지됨 (Keep Going)
-        # 점수가 낮더라도 상승세라면 절대 멈추지 않음이 핵심
         if diff >= -NOISE_MARGIN:
             self.action_state = 'FORWARD_TRACKING'
+            
+            # 기본 전진
             cmd.linear.x = self.BASE_SPEED
             
-            # 방향 미세 조정 (Gradient Ascent 가속)
-            # 신호가 확 좋아지면 속도를 조금 더 냄
-            if diff > 1.0:
-                cmd.linear.x = self.MAX_SPEED
-            
-            # 아주 약간의 조향을 섞어서 완만한 곡선을 그리며 탐색 (직선 고착 방지)
-            # 현재 스캔 방향으로 미세 회전
+            # 아주 미세한 조향만 허용 (지형 극복용)
             cmd.angular.z = 0.05 * self.scan_direction 
 
-            # 로그 간소화 (너무 자주 뜨지 않게)
-            if self.current_s_pc < 45.0 and diff > 0.5:
-                self.get_logger().info(f"✨ 신호 추적 중... (점수 {current_score:.1f} / 변화 +{diff:.2f})")
+            if diff > 1.0: # 신호가 확 좋아지면 속도 증가
+                cmd.linear.x = self.MAX_SPEED
 
-        # 상황 2: 신호가 나빠짐 (Wrong Direction)
-        # 전진했더니 점수가 떨어짐 -> 이 방향 아님 -> 후진 후 방향 전환
+        # 상황 2: 신호가 나빠짐 -> 전략 수정
         else:
-            self.get_logger().warn(f"📉 방향 이탈 (변화 {diff:.2f}). 신호세기 PC : {self.rssi_pc:.1f}, CAM : {self.rssi_cam:.1f}재설정 시도.")
+            self.get_logger().warn(f"📉 방향 이탈 (변화 {diff:.2f}). 각도 재설정.")
             
-            # 2-1. 위치 복구 (Recovery)
-            # 잘못 간 만큼 살짝 뒤로 물러남 (신호가 좋았던 위치로 복귀)
-            cmd.linear.x = -0.15
+            # -------------------------------------------------------
+            # [수정됨] Pivot & Probe 전략 진입
+            # -------------------------------------------------------
+            
+            # 1. 일단 멈춤 (운동량 제거)
+            cmd.linear.x = 0.0
             cmd.angular.z = 0.0
             
-            # 2-2. 다음 틱을 위해 회전 준비 (상태 타이머 설정)
-            # 이 함수가 다음 호출될 때(0.1초 뒤)가 아니라, 
-            # 지금 결정을 내려서 타이머를 걸어야 함.
+            # 2. 새로운 회전 방향 결정
+            # - 랜덤으로 90도 정도 확 꺾는 것이 로컬 미니마 탈출에 좋음
+            # - 0.8 rad/s * 1.0 sec = 약 45~50도 회전
+            turn_dir = random.choice([1.0, -1.0])
+            self.stored_turn_speed = 1.0 * turn_dir # 회전 속도 저장
             
-            # 논리: 이번 틱은 '후진' 명령을 내리고, 
-            # 다음 몇 틱 동안은 '회전'을 하도록 유도해야 함.
-            # 하지만 단순화를 위해 여기서는 "일단 후진"만 수행하고
-            # 후진이 끝난 직후(다음 로직 진입 시) 회전하도록 플래그를 쓰거나,
-            # 랜덤 회전 + 후진을 섞음.
+            # 3. 상태 설정: 'PIVOT_TURN'으로 진입
+            self.action_state = 'PIVOT_TURN'
+            self.state_timer = 8  # 0.8초 동안 제자리 회전
             
-            # [수정된 전략] 제자리 회전은 RSSI 변화가 없으므로 
-            # "후진하면서 회전"하여 위치와 각도를 동시에 바꿈
-            turn_direction = random.choice([1.0, -1.0])
-            self.scan_direction = turn_direction # 다음 탐색 방향 결정
-            
-            cmd.linear.x = -0.10 # 천천히 후진
-            cmd.angular.z = 0.8 * turn_direction # 강하게 회전
-            
-            self.state_timer = 5 # 0.5초 동안 이 동작 수행 (후진+회전)
-            self.action_state = 'RECOVER_TURN'
-            
-            # 회전 후에는 이전 점수와의 비교가 무의미해질 수 있으므로
-            # 현재 점수를 기준점으로 재설정하는 효과
+            # (타이머가 끝나면 자동으로 STRAIGHT_PROBE로 넘어감)
 
         self.last_cmd = cmd
         self.prev_score = current_score
         return cmd
+    
+    
     def control_loop(self):
         """
         [수정됨] 벡터 합성 제어 (Vector Fusion)
