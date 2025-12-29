@@ -1,23 +1,27 @@
 import rclpy
-from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
-from rclpy.qos import QoSProfile
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Int32
 import random
 
 # ---------------------------------------------------------
-# 1. 1D 칼만 필터 클래스
+# 1. 1D 칼만 필터 클래스 (초기값 자동 설정 기능 추가)
 # ---------------------------------------------------------
 class SimpleKalmanFilter:
-    def __init__(self, Q, R, P, initial_value):
+    def __init__(self, Q, R, P, initial_value=None):
         self.Q = Q              # 프로세스 노이즈
         self.R = R              # 측정 노이즈
         self.P = P              # 추정 오차
-        self.X = initial_value  # 초기값
+        self.X = initial_value  # 초기값 (None이면 첫 데이터로 설정)
 
     def update(self, measurement):
+        # [수정] 첫 데이터가 들어오면 그것을 초기값으로 설정 (초기 급락 방지)
+        if self.X is None:
+            self.X = measurement
+            return self.X
+
         # 1. Prediction Update
         self.P = self.P + self.Q
 
@@ -29,47 +33,48 @@ class SimpleKalmanFilter:
         return self.X
 
 # ---------------------------------------------------------
-# 2. 메인 로봇 제어 노드 (TQ 기반 수정)
+# 2. 메인 로봇 제어 노드 (TQ 기반 변수명 수정됨)
 # ---------------------------------------------------------
 class ReactiveRelayBot(Node):
     def __init__(self):
         super().__init__('reactive_relay_bot')
         
-        # QoS 설정
-        qos_policy = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
+        # QoS 설정: 라이다(LDS)와 호환되도록 BEST_EFFORT 사용
+        qos_policy = QoSProfile(
+            depth=10,
+            reliability=ReliabilityPolicy.BEST_EFFORT
+        )
         
         # Subscriber & Publisher
         self.scan_sub = self.create_subscription(LaserScan, 'scan', self.scan_callback, qos_policy)
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
         
-        # RSSI/TQ 구독 (이름은 RSSI지만 실제로는 TQ값 0~255가 들어옴)
-        self.rssi_pc_sub = self.create_subscription(Int32, 'rssi/pc', self.rssi_pc_callback, 10)
-        self.rssi_cam_sub = self.create_subscription(Int32, 'rssi/cam', self.rssi_cam_callback, 10)
+        # [수정] 변수명 RSSI -> TQ 변경
+        self.tq_pc_sub = self.create_subscription(Int32, 'rssi/pc', self.tq_pc_callback, 10)
+        self.tq_cam_sub = self.create_subscription(Int32, 'rssi/cam', self.tq_cam_callback, 10)
         
-        # [초기값 수정] TQ는 0~255 범위. 초기값은 양호한 상태(255)로 가정
-        self.rssi_pc = 255.0
-        self.rssi_cam = 255.0
+        # [수정] 초기값을 None으로 설정하여 첫 데이터 수신 시 초기화
+        self.tq_pc = None
+        self.tq_cam = None
         
         # 타이머 (0.5초 주기)
         self.timer = self.create_timer(0.5, self.control_loop)
 
-        # [필터 설정] TQ값(0~255)은 스케일이 크므로 R값(노이즈)을 조금 더 키움
-        # Q=0.5: TQ 변화에 적당히 민감하게
-        # R=10.0: 일시적인 TQ 드롭을 필터링
-        self.kf_pc = SimpleKalmanFilter(Q=0.5, R=10.0, P=5.0, initial_value=255.0)
-        self.kf_cam = SimpleKalmanFilter(Q=0.5, R=10.0, P=5.0, initial_value=255.0)
+        # [필터 설정] TQ값(0~255) 대응
+        # initial_value=None으로 설정하여 첫 수신값에 맞춤
+        self.kf_pc = SimpleKalmanFilter(Q=0.5, R=10.0, P=5.0, initial_value=None)
+        self.kf_cam = SimpleKalmanFilter(Q=0.5, R=10.0, P=5.0, initial_value=None)
 
         # 상태 변수
         self.obstacle_detected = False
-        self.escape_direction = 0.0 
-
+        
         self.avoid_angular_z = 0.0  
         self.front_min_dist = 10.0  
         
         self.prev_score = 0.0     
         self.action_state = 'FORWARD' 
         self.state_timer = 0      
-        self.turn_direction = 1.0 
+        self.stored_turn_speed = 0.0
         self.last_cmd = Twist()   
         
         # 기본 주행 파라미터
@@ -77,27 +82,32 @@ class ReactiveRelayBot(Node):
         self.MAX_SPEED = 0.22
         self.MAX_ANGULAR_SPEED = 1.0 
         self.scan_direction = 1.0 
-        self.is_moving_forward = True 
 
     def scan_callback(self, msg):
-        """ 장애물 회피 로직 (이전과 동일) """
+        """ 장애물 회피 로직 (Division by Zero 방지 포함) """
         scan_ranges = msg.ranges
+        if not scan_ranges: return
+            
         cleaned_ranges = [r if (r > 0.01 and r < 10.0) else 10.0 for r in scan_ranges]
+        num_ranges = len(cleaned_ranges)
         
-        front_ranges = cleaned_ranges[-30:] + cleaned_ranges[:30]
-        self.front_min_dist = min(front_ranges)
-        
-        left_ranges = cleaned_ranges[0:90]
-        right_ranges = cleaned_ranges[270:360]
-        
-        if len(left_ranges) > 0:
-            avg_left = sum(left_ranges) / len(left_ranges)
+        # 1. 전방 거리
+        if num_ranges > 60:
+            front_ranges = cleaned_ranges[-30:] + cleaned_ranges[:30]
         else:
-            avg_left = 10.0
-        if len(right_ranges) > 0:
-            avg_right = sum(right_ranges) / len(right_ranges)
-        else:
-            avg_right = 10.0
+            front_ranges = cleaned_ranges
+        
+        self.front_min_dist = min(front_ranges) if front_ranges else 10.0
+        
+        # 2. 좌우 척력 계산
+        quarter = num_ranges // 4
+        if quarter == 0: return
+
+        left_ranges = cleaned_ranges[0:quarter] 
+        right_ranges = cleaned_ranges[-quarter:]
+        
+        avg_left = sum(left_ranges) / len(left_ranges) if left_ranges else 10.0
+        avg_right = sum(right_ranges) / len(right_ranges) if right_ranges else 10.0
         
         force_left = 1.0 / (avg_left + 0.1)
         force_right = 1.0 / (avg_right + 0.1)
@@ -107,38 +117,35 @@ class ReactiveRelayBot(Node):
 
     def calculate_quality(self):
         """ 
-        [수정됨] batman-adv TQ 기반 품질 계산
+        [수정] batman-adv TQ 기반 품질 계산 (변수명 tq로 변경)
         TQ: 0 (Bad) ~ 255 (Perfect)
         """
+        # 아직 데이터가 안 들어왔으면 0점 처리 (출발 방지)
+        if self.tq_pc is None or self.tq_cam is None:
+            return 0.0
+
         def to_score(tq_val):
-            # TQ 220 이상이면 만점 (매우 안정적)
             if tq_val >= 220: return 100.0
-            # TQ 80 이하면 0점 (패킷 손실 심각)
             if tq_val <= 80: return 0.0
-            
-            # 80~220 사이를 0~100점으로 선형 변환
-            # (val - 80) / (220 - 80) * 100
+            # 80~220 구간을 0~100점으로 변환
             score = (tq_val - 80.0) / 140.0 * 100.0
             return score
 
-        s_pc = to_score(self.rssi_pc)
-        s_cam = to_score(self.rssi_cam)
-        
-        self.current_s_pc = s_pc 
+        s_pc = to_score(self.tq_pc)
+        s_cam = to_score(self.tq_cam)
         
         # ---------------------------------------------------------
         # 1. 목줄 (The Leash) - TQ 버전
         # ---------------------------------------------------------
-        # batman-adv에서 TQ 150 이하는 링크 품질이 떨어지기 시작하는 구간
-        # TQ 120 미만은 위험으로 간주 (SAFE_THRESHOLD)
-        SAFE_THRESHOLD_TQ = 120.0 
+        # [수정] 너무 쉽게 멈추지 않도록 임계값 120 -> 90으로 완화
+        SAFE_THRESHOLD_TQ = 90.0 
         
-        if self.rssi_pc < SAFE_THRESHOLD_TQ:
-            # 위험 상황: 복귀 강제
+        if self.tq_pc < SAFE_THRESHOLD_TQ:
+            # 위험 상황: 복귀 강제 (강한 음수 점수 반환)
             return -100.0 
 
         # ---------------------------------------------------------
-        # 2. 안전 구역 내에서의 행동
+        # 2. 점수 계산 (PC와 CAM의 균형)
         # ---------------------------------------------------------
         final_score = min(s_pc, s_cam)
         final_score = final_score * 0.9 + (s_pc + s_cam) * 0.05
@@ -146,35 +153,50 @@ class ReactiveRelayBot(Node):
         return final_score
     
 
-    def get_rssi_command(self):
+    def get_tq_command(self):
         cmd = Twist()
         
+        # 아직 데이터 수신 전이면 정지
+        if self.tq_pc is None:
+            self.get_logger().info("⏳ TQ 데이터 대기 중...", once=True)
+            return cmd
+
         current_score = self.calculate_quality()
         diff = current_score - self.prev_score
         
-        # [목표 도달]
-        if current_score > 90.0: # 기준 점수 약간 상향
+        # [목표 도달] 점수가 매우 좋으면 정지
+        if current_score > 95.0:
             self.last_cmd = Twist()
             return cmd
 
-        # [상태 머신] Pivot & Probe (로직 구조 동일)
+        # -----------------------------------------------------------
+        # [상태 머신] Pivot & Probe
+        # -----------------------------------------------------------
         if self.state_timer > 0:
             self.state_timer -= 1
             
+            # [단계 1] 제자리 회전 (Pivot Turn)
             if self.action_state == 'PIVOT_TURN':
                 cmd.linear.x = 0.0
                 cmd.angular.z = self.stored_turn_speed
+                
+                # 회전 끝 -> 직진 탐색 시작
                 if self.state_timer == 0:
                     self.action_state = 'STRAIGHT_PROBE'
-                    self.state_timer = 15
-                    self.get_logger().info("🚀 TQ 탐색: 직진(Probe) 시작.")
+                    self.state_timer = 15  # 1.5초 직진 예약
+                    self.get_logger().info("🚀 방향 전환 완료 -> 직진 탐색(Probe) 시작")
                 return cmd
 
+            # [단계 2] 직선 탐색 (Straight Probe)
             elif self.action_state == 'STRAIGHT_PROBE':
+                # [수정] 탐색 중 신호 급락 시 -> 멈추지 말고 즉시 재탐색(PIVOT) 시도
                 if diff < -5.0:
-                    self.get_logger().warn(f"🚫 TQ 급락! ({diff:.2f}) 탐색 중단.")
-                    self.state_timer = 0
-                    return self.last_cmd
+                    self.get_logger().warn(f"🚫 탐색 실패(TQ 급락 {diff:.2f}). 다시 회전합니다.")
+                    self.state_timer = 0 # 현재 상태 종료
+                    # 재귀적으로 다시 판단 로직으로 넘기거나, 여기서 바로 회전 명령을 줄 수 있음
+                    # 여기서는 루프를 끝내고 다음 주기(0.5초 뒤)에 else문(상황 2)으로 빠지게 유도
+                    return self.last_cmd 
+                
                 cmd.linear.x = 0.20
                 cmd.angular.z = 0.0
                 self.last_cmd = cmd
@@ -187,7 +209,7 @@ class ReactiveRelayBot(Node):
         # -----------------------------------------------------------
         NOISE_MARGIN = 0.5 
 
-        # 상황 1: TQ가 유지되거나 좋아짐
+        # 상황 1: TQ가 유지되거나 좋아짐 (Go)
         if diff >= -NOISE_MARGIN:
             self.action_state = 'FORWARD_TRACKING'
             cmd.linear.x = self.BASE_SPEED
@@ -196,18 +218,22 @@ class ReactiveRelayBot(Node):
             if diff > 1.0: 
                 cmd.linear.x = self.MAX_SPEED
 
-        # 상황 2: TQ 나빠짐
+        # 상황 2: TQ 나빠짐 (Turn)
         else:
-            self.get_logger().warn(f"📉 TQ 하락 (변화 {diff:.2f}). 재설정.")
+            self.get_logger().warn(f"📉 TQ 하락 (변화 {diff:.2f}). 회전 시도.")
             
+            # 일단 정지
             cmd.linear.x = 0.0
             cmd.angular.z = 0.0
             
+            # 랜덤 회전 방향 설정
             turn_dir = random.choice([1.0, -1.0])
             self.stored_turn_speed = 1.0 * turn_dir 
             
+            # 상태 변경 -> PIVOT_TURN
             self.action_state = 'PIVOT_TURN'
-            self.state_timer = 8 
+            self.state_timer = 8  # 4초 회전 (타이머 주기가 0.5초라면 8틱 = 4초)
+            # 8틱이 0.5초 주기면 4초가 맞습니다. (너무 길면 줄이세요)
 
         self.last_cmd = cmd
         self.prev_score = current_score
@@ -215,12 +241,15 @@ class ReactiveRelayBot(Node):
     
     
     def control_loop(self):
-        """ 벡터 합성 제어 (동일) """
+        """ 벡터 합성 제어 """
         cmd = Twist()
-        rssi_cmd = self.get_rssi_command()
+        # [수정] 함수 이름 변경 반영
+        tq_cmd = self.get_tq_command()
         
-        final_angular_z = rssi_cmd.angular.z + self.avoid_angular_z
+        final_angular_z = tq_cmd.angular.z + self.avoid_angular_z
+        self.get_logger().info(f"거리: {self.front_min_dist:.2f}m | TQ점수: {self.prev_score:.1f}")
         
+        # 장애물 회피 우선순위 처리
         if self.front_min_dist < 0.4:
             final_linear_x = -0.05 
             final_angular_z = self.avoid_angular_z * 2.0 
@@ -228,20 +257,21 @@ class ReactiveRelayBot(Node):
                  final_angular_z = 1.0 
                  
         elif self.front_min_dist < 0.7:
-            final_linear_x = rssi_cmd.linear.x * 0.3
+            final_linear_x = tq_cmd.linear.x * 0.3
         else:
-            final_linear_x = rssi_cmd.linear.x
+            final_linear_x = tq_cmd.linear.x
 
         cmd.linear.x = max(min(final_linear_x, self.MAX_SPEED), -self.MAX_SPEED)
         cmd.angular.z = max(min(final_angular_z, self.MAX_ANGULAR_SPEED), -self.MAX_ANGULAR_SPEED)
 
         self.cmd_pub.publish(cmd)
     
-    def rssi_pc_callback(self, msg):
-        self.rssi_pc = self.kf_pc.update(float(msg.data))
+    # [수정] 콜백 함수 이름 변경
+    def tq_pc_callback(self, msg):
+        self.tq_pc = self.kf_pc.update(float(msg.data))
 
-    def rssi_cam_callback(self, msg):
-        self.rssi_cam = self.kf_cam.update(float(msg.data))
+    def tq_cam_callback(self, msg):
+        self.tq_cam = self.kf_cam.update(float(msg.data))
 
 def main(args=None):
     rclpy.init(args=args)
