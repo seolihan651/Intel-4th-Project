@@ -49,18 +49,21 @@ class ReactiveRelayBot(Node):
         self.rssi_pc = -60.0
         self.rssi_cam = -60.0
         
-        # 타이머 (0.1초 주기)
-        self.timer = self.create_timer(0.1, self.control_loop)
+        # 타이머 (0.5초 주기)
+        self.timer = self.create_timer(0.5, self.control_loop)
 
         # [필터 설정] Wifi 신호는 노이즈가 심하므로 R값을 높게 설정
         # Q=0.1: 로봇이 움직이며 신호가 서서히 변함
         # R=10.0: 측정값이 많이 튐
-        self.kf_pc = SimpleKalmanFilter(Q=0.1, R=10.0, P=1.0, initial_value=-60.0)
-        self.kf_cam = SimpleKalmanFilter(Q=0.1, R=10.0, P=1.0, initial_value=-60.0)
+        self.kf_pc = SimpleKalmanFilter(Q=0.1, R=6.0, P=1.0, initial_value=-60.0)
+        self.kf_cam = SimpleKalmanFilter(Q=0.1, R=6.0, P=1.0, initial_value=-60.0)
 
         # 상태 변수
         self.obstacle_detected = False
         self.escape_direction = 0.0 
+
+        self.avoid_angular_z = 0.0  # 회피 벡터 초기값 (0 = 회전 안 함)
+        self.front_min_dist = 10.0  # 전방 거리 초기값 (10m = 안전함)
         
 
         self.prev_score = 0.0     # 이전 점수 (0~100점)
@@ -203,7 +206,7 @@ class ReactiveRelayBot(Node):
         # 상황 2: 신호가 나빠짐 (Wrong Direction)
         # 전진했더니 점수가 떨어짐 -> 이 방향 아님 -> 후진 후 방향 전환
         else:
-            self.get_logger().warn(f"📉 방향 이탈 (변화 {diff:.2f}). 재설정 시도.")
+            self.get_logger().warn(f"📉 방향 이탈 (변화 {diff:.2f}). 신호세기 PC : {self.rssi_pc:.1f}, CAM : {self.rssi_cam:.1f}재설정 시도.")
             
             # 2-1. 위치 복구 (Recovery)
             # 잘못 간 만큼 살짝 뒤로 물러남 (신호가 좋았던 위치로 복귀)
@@ -237,7 +240,7 @@ class ReactiveRelayBot(Node):
         self.last_cmd = cmd
         self.prev_score = current_score
         return cmd
-def control_loop(self):
+    def control_loop(self):
         """
         [수정됨] 벡터 합성 제어 (Vector Fusion)
         최종 명령 = (RSSI 추적 벡터) + (장애물 회피 벡터)
