@@ -1,4 +1,5 @@
 import rclpy
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
@@ -35,7 +36,7 @@ class ReactiveRelayBot(Node):
         super().__init__('reactive_relay_bot')
         
         # QoS 설정
-        qos_policy = QoSProfile(depth=10)
+        qos_policy = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
         
         # Subscriber & Publisher
         self.scan_sub = self.create_subscription(LaserScan, 'scan', self.scan_callback, qos_policy)
@@ -89,8 +90,14 @@ class ReactiveRelayBot(Node):
         left_ranges = cleaned_ranges[0:90]
         right_ranges = cleaned_ranges[270:360]
         
-        avg_left = sum(left_ranges) / len(left_ranges)
-        avg_right = sum(right_ranges) / len(right_ranges)
+        if len(left_ranges) > 0:
+            avg_left = sum(left_ranges) / len(left_ranges)
+        else:
+            avg_left = 10.0
+        if len(right_ranges) > 0:
+            avg_right = sum(right_ranges) / len(right_ranges)
+        else:
+            avg_right = 10.0
         
         force_left = 1.0 / (avg_left + 0.1)
         force_right = 1.0 / (avg_right + 0.1)
