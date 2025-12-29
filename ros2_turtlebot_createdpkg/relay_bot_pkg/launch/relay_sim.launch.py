@@ -26,8 +26,8 @@ def generate_launch_description():
     # ros2 run relay_bot_pkg twist_rssi_sim
     tq_sim_node = Node(
         package='relay_bot_pkg',
-        executable='tq_rssi_sim',
-        name='tq_rssi_sim',
+        executable='tq_simulator',  # tq_rssi_sim -> tq_simulator
+        name='tq_simulator',
         output='screen'
     )
 

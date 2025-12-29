@@ -65,8 +65,8 @@ class TqSimulatorTwist(Node):
             Twist, 'cmd_vel_cam', self.cam_cmd_callback, 10)
 
         # [중요] 이름은 rssi/pc 지만 실제 데이터는 TQ (0~255)
-        self.pub_tq_pc = self.create_publisher(Int32, 'rssi/pc', 10)
-        self.pub_tq_cam = self.create_publisher(Int32, 'rssi/cam', 10)
+        self.pub_tq_pc = self.create_publisher(Int32, 'tq/pc', 10)
+        self.pub_tq_cam = self.create_publisher(Int32, 'tq/cam', 10)
 
         # --- Gazebo 클라이언트 ---
         self.spawn_client = self.create_client(SpawnEntity, '/spawn_entity')

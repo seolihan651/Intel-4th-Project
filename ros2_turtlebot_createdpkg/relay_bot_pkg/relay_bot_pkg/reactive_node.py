@@ -50,8 +50,8 @@ class ReactiveRelayBot(Node):
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
         
         # [수정] 변수명 RSSI -> TQ 변경
-        self.tq_pc_sub = self.create_subscription(Int32, 'tq/pc', self.tq_pc_callback, 10)
-        self.tq_cam_sub = self.create_subscription(Int32, 'tq/cam', self.tq_cam_callback, 10)
+        self.tq_pc_sub = self.create_subscription(Int32, '/tq/pc', self.tq_pc_callback, 10)
+        self.tq_cam_sub = self.create_subscription(Int32, '/tq/cam', self.tq_cam_callback, 10)
         
         # [수정] 초기값을 None으로 설정하여 첫 데이터 수신 시 초기화
         self.tq_pc = None
@@ -156,17 +156,17 @@ class ReactiveRelayBot(Node):
     def get_tq_command(self):
         cmd = Twist()
         
-        # 아직 데이터 수신 전이면 정지
-        if self.tq_pc is None:
-            self.get_logger().info("⏳ TQ 데이터 대기 중...", once=True)
+        # 데이터 없으면 대기
+        if self.tq_pc is None: # or self.tq_cam is None (조건 완화 여부에 따라)
             return cmd
 
         current_score = self.calculate_quality()
         diff = current_score - self.prev_score
         
-        # [목표 도달] 점수가 매우 좋으면 정지
+        # [수정] 목표 도달(>95점) 시에도 점수는 업데이트하고 종료해야 함
         if current_score > 95.0:
             self.last_cmd = Twist()
+            self.prev_score = current_score  # <--- [중요] 이 줄을 꼭 추가해주세요!
             return cmd
 
         # -----------------------------------------------------------
@@ -269,9 +269,12 @@ class ReactiveRelayBot(Node):
     # [수정] 콜백 함수 이름 변경
     def tq_pc_callback(self, msg):
         self.tq_pc = self.kf_pc.update(float(msg.data))
+        # [디버깅] 데이터 수신 확인 로그
+        #self.get_logger().info(f"PC 데이터 수신: {msg.data}",once = True)
 
     def tq_cam_callback(self, msg):
         self.tq_cam = self.kf_cam.update(float(msg.data))
+        #self.get_logger().info(f"CAM 데이터 수신: {msg.data}",once = True)
 
 def main(args=None):
     rclpy.init(args=args)
