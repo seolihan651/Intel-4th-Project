@@ -24,10 +24,10 @@ def generate_launch_description():
 
     # 3. 사용자 커스텀 노드 1: twist_rssi_sim
     # ros2 run relay_bot_pkg twist_rssi_sim
-    twist_rssi_sim_node = Node(
+    tq_sim_node = Node(
         package='relay_bot_pkg',
-        executable='twist_rssi_sim',
-        name='twist_rssi_sim',
+        executable='tq_rssi_sim',
+        name='tq_rssi_sim',
         output='screen'
     )
 
@@ -57,7 +57,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         gazebo_cmd,
-        twist_rssi_sim_node,
+        tq_sim_node,
         relay_bot_node,
         teleop_node
     ])
