@@ -50,8 +50,8 @@ class ReactiveRelayBot(Node):
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
         
         # [수정] 변수명 RSSI -> TQ 변경
-        self.tq_pc_sub = self.create_subscription(Int32, 'rssi/pc', self.tq_pc_callback, 10)
-        self.tq_cam_sub = self.create_subscription(Int32, 'rssi/cam', self.tq_cam_callback, 10)
+        self.tq_pc_sub = self.create_subscription(Int32, 'tq/pc', self.tq_pc_callback, 10)
+        self.tq_cam_sub = self.create_subscription(Int32, 'tq/cam', self.tq_cam_callback, 10)
         
         # [수정] 초기값을 None으로 설정하여 첫 데이터 수신 시 초기화
         self.tq_pc = None

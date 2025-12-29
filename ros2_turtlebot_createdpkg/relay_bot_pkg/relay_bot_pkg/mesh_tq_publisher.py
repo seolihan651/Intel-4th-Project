@@ -13,8 +13,8 @@ class MeshRssiPublisher(Node):
             'cam': '2c:cf:67:8c:2a:7b'   
         }
         
-        self.pub_pc = self.create_publisher(Int32, 'rssi/pc', 10)
-        self.pub_cam = self.create_publisher(Int32, 'rssi/cam', 10)
+        self.pub_pc = self.create_publisher(Int32, 'tq/pc', 10)
+        self.pub_cam = self.create_publisher(Int32, 'tq/cam', 10)
         
         self.timer = self.create_timer(1.0, self.update_tq)
         
