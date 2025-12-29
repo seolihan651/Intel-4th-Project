@@ -10,96 +10,87 @@ class MeshRssiPublisher(Node):
         
         # ---------------------------------------------------------
         # [설정] PC와 카메라(혹은 다른 로봇)의 MAC 주소 입력
-        # 터미널에서 'ip link' 또는 'ifconfig'로 확인한 HWaddr
+        # batman-adv mesh 인터페이스(bat0)가 아닌 
+        # 실제 물리 인터페이스(wlan0)의 MAC 주소가 출력되는 경우가 많으므로 확인 필요
         # ---------------------------------------------------------
         self.TARGET_MACS = {
-            'pc':  '2c:cf:67:8c:2a:13',  # <--- PC의 무선랜 MAC 주소로 변경!
-            'cam': '2c:cf:67:8c:29:c8'   # <--- BodyCam(RPi)의 무선랜 MAC 주소로 변경!
+            'pc':  '2c:cf:67:8c:2a:13',  
+            'cam': '2c:cf:67:8c:29:c8'   
         }
         
-        # 인터페이스 이름 (보통 라즈베리파이는 wlan0)
-        self.INTERFACE = 'wlan0' 
-
-        # Publisher 생성
+        # Publisher 생성 (이름은 rssi로 유지하지만 내용은 TQ값입니다)
         self.pub_pc = self.create_publisher(Int32, 'rssi/pc', 10)
         self.pub_cam = self.create_publisher(Int32, 'rssi/cam', 10)
         
-        # 0.5초마다 RSSI 확인 (너무 자주하면 CPU 부담)
-        self.timer = self.create_timer(0.5, self.update_rssi)
+        # 0.5초마다 TQ 확인
+        self.timer = self.create_timer(0.5, self.update_tq)
         
-        self.get_logger().info("📡 Mesh RSSI Publisher Started")
+        self.get_logger().info("🦇 Mesh TQ Publisher Started (using batctl)")
 
-    def get_rssi_from_iw(self):
+    def get_tq_from_batctl(self):
         """
-        'iw dev wlan0 station dump' 명령어를 실행하여
-        연결된 모든 메쉬 이웃의 신호 세기를 파싱합니다.
+        'sudo batctl n' 명령어를 실행하여 TQ(Transmission Quality)를 파싱합니다.
+        TQ 값은 0~255 사이의 정수이며, 255가 최상의 품질입니다.
         """
-        rssi_data = {}
+        tq_data = {}
         try:
-            # 리눅스 명령어 실행
+            # batctl n 실행 (Neighbors table)
+            # 출력 예시: wlan0  02:11:22:33:44:55    0.200s   (245) ...
             result = subprocess.check_output(
-                ['iw', 'dev', self.INTERFACE, 'station', 'dump'], 
+                ['sudo', 'batctl', 'n'], 
                 stderr=subprocess.STDOUT
             ).decode('utf-8')
             
-            # 파싱 로직: 'Station'으로 시작해서 MAC이 나오고, 뒤이어 'signal:'이 나옴
-            current_mac = None
-            
-            for line in result.split('\n'):
+            lines = result.split('\n')
+            for line in lines:
                 line = line.strip()
+                # 헤더 건너뛰기
+                if "Neigh" in line or "IF" in line:
+                    continue
                 
-                # 1. MAC 주소 찾기 (예: Station 12:34:56:78:90:ab (on wlan0))
-                if line.startswith('Station'):
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        current_mac = parts[1].lower() # 소문자로 통일
+                # 정규표현식으로 MAC과 (...) 괄호 안의 TQ 값 추출
+                # 예: 02:11:22:33:44:55 ... (245)
+                # MAC 패턴: 2자리 6개
+                match = re.search(r'([0-9a-fA-F:]{17}).*\(\s*(\d+)\s*\)', line)
                 
-                # 2. 신호 세기 찾기 (예: signal:  -54 dBm)
-                if current_mac and line.startswith('signal:'):
-                    # 'signal:', '-54', 'dBm' 등으로 쪼개짐
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        try:
-                            # 'avg:' 같은 게 붙어있을 수 있으므로 숫자만 추출
-                            # 보통 parts[1]이 '-54' 임
-                            rssi_val = int(parts[1])
-                            rssi_data[current_mac] = rssi_val
-                        except ValueError:
-                            pass
-                            
+                if match:
+                    found_mac = match.group(1).lower()
+                    tq_val = int(match.group(2))
+                    tq_data[found_mac] = tq_val
+
         except subprocess.CalledProcessError:
-            self.get_logger().error("Failed to execute iw command. sudo 권한이 필요한가요?")
+            self.get_logger().error("Failed to execute batctl. 'sudo' 권한이 있나요?")
         except Exception as e:
-            self.get_logger().error(f"Error parsing RSSI: {e}")
+            self.get_logger().error(f"Error parsing TQ: {e}")
             
-        return rssi_data
+        return tq_data
 
-    def update_rssi(self):
-        # 1. 전체 스캔
-        current_rssi_map = self.get_rssi_from_iw()
+    def update_tq(self):
+        # 1. batctl n 스캔
+        current_tq_map = self.get_tq_from_batctl()
         
-        # 2. PC 신호 발행
+        # 2. PC TQ 발행
         pc_mac = self.TARGET_MACS['pc'].lower()
-        if pc_mac in current_rssi_map:
+        if pc_mac in current_tq_map:
             msg = Int32()
-            msg.data = current_rssi_map[pc_mac]
+            msg.data = current_tq_map[pc_mac]
             self.pub_pc.publish(msg)
-            # self.get_logger().info(f"PC RSSI: {msg.data} dBm")
+            # self.get_logger().info(f"PC TQ: {msg.data}/255")
         else:
-            # 연결 끊김 혹은 감지 안됨 -> 안전을 위해 매우 낮은 값 발행
+            # 연결 끊김 -> TQ 0 처리
             msg = Int32()
-            msg.data = -99
+            msg.data = 0
             self.pub_pc.publish(msg)
 
-        # 3. CAM 신호 발행
+        # 3. CAM TQ 발행
         cam_mac = self.TARGET_MACS['cam'].lower()
-        if cam_mac in current_rssi_map:
+        if cam_mac in current_tq_map:
             msg = Int32()
-            msg.data = current_rssi_map[cam_mac]
+            msg.data = current_tq_map[cam_mac]
             self.pub_cam.publish(msg)
         else:
             msg = Int32()
-            msg.data = -99
+            msg.data = 0
             self.pub_cam.publish(msg)
 
 def main(args=None):
