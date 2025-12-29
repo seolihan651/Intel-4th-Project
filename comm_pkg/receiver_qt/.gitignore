@@ -1,0 +1,9 @@
+build/
+AiotClient
+Makefile
+aiot.db
+*.o
+*.pro.user
+moc_*
+ui_*.h
+qrc_*.cpp

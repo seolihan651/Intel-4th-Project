@@ -20,9 +20,10 @@ static const char* DEFAULT_PEER_IP = "10.50.0.10"; ////"192.168.1.10";
 static const int   DEFAULT_PORT    = 9999;
 
 static const char* IFACE = "wlan0";     // RSSI 측정용 인터페이스
-static const int   WIDTH  = 1280;       // 720p
-static const int   HEIGHT = 720;
+static const int   WIDTH  = 720;       // 720p
+static const int   HEIGHT = 480;
 static const int   JPEG_QUALITY = 60;   // 50~70 권장(속도/화질 타협)
+static const int   CHUNK_DELAY_US = 250; // chunk 전송 사이 micro-delay (burst 완화)
 
 static const int   UDP_PAYLOAD = 1200;  // MTU(1500) 고려, 헤더 포함하면 1200 정도가 안정적
 static const uint32_t MAGIC = 0xA0B0C0D0;
@@ -108,7 +109,7 @@ int main(int argc, char** argv) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) { perror("socket"); return -1; }
 
-    int sndbuf = 4 * 1024 * 1024;
+    int sndbuf = 256 * 1024;  // 4MB -> 256KB (burst 완화)
     setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
 
     sockaddr_in peerAddr{};
@@ -198,10 +199,18 @@ int main(int argc, char** argv) {
                 perror("sendto");
                 break;
             }
-        }
+        
+            // [중요] 마이크로초 단위 딜레이로 burst 완화
+            if (CHUNK_DELAY_US > 0 && chunkCount > 1) usleep(CHUNK_DELAY_US);
+}
 
+        // 로그 (너무 과하면 주석)
+        // cout << "Frame " << frameId << " : " << totalLen << " bytes, chunks=" << chunkCount << "\n";
         frameId++;
 
+        // 로컬에서 보기 원하면 주석 해제(헤드리스면 유지)
+        // imshow("Sender Preview", frame);
+        // if (waitKey(1) == 'q') break;
     }
 
     close(sock);

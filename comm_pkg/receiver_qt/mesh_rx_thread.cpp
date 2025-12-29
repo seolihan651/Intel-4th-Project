@@ -1,5 +1,6 @@
-#include <opencv2/opencv.hpp>
-#include <iostream>
+#include "mesh_rx_thread.h"
+#include <QDebug>
+
 #include <vector>
 #include <unordered_map>
 #include <chrono>
@@ -11,13 +12,21 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <sys/time.h>
+#include <errno.h>
 
-using namespace cv;
 using namespace std;
 
-static const int PORT = 9999;
-static const int BUF_SIZE = 65536;
-static const uint32_t MAGIC = 0xA0B0C0D0;
+namespace {
+constexpr int BUF_SIZE = 65536;
+constexpr uint32_t MAGIC = 0xA0B0C0D0;
+
+// receiver_fixed_tuned 튜닝 반영
+constexpr int RCVBUF_BYTES = 2 * 1024 * 1024;    // 2MB
+constexpr int LINK_UPDATE_MS = 500;             // 0.5초
+constexpr int EMIT_MIN_MS = 40;                 // 25fps 제한
+constexpr int FRAME_TIMEOUT_MS = 350;
+constexpr size_t MAX_INFLIGHT_FRAMES = 32;
 
 #pragma pack(push, 1)
 struct UdpChunkHeader {
@@ -117,7 +126,6 @@ static BatRoute getBatRouteToOriginator(const string& originatorMac) {
         string s = trim(line);
         if (s.empty()) continue;
 
-        // 토큰화
         istringstream ls(s);
         vector<string> tok;
         string t;
@@ -174,13 +182,13 @@ static string getBestNeighborMac() {
 }
 
 // ---- minimal overlay (top-left only) ----
-static void drawLabelTopLeft(Mat& img, const string& line1, const string& line2) {
+static void drawLabelTopLeft(cv::Mat& img, const string& l1, const string& l2) {
     double fontScale = 0.8;
     int thickness = 2;
     int baseline = 0;
 
-    Size t1 = getTextSize(line1, FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
-    Size t2 = getTextSize(line2, FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
+    cv::Size t1 = cv::getTextSize(l1, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
+    cv::Size t2 = cv::getTextSize(l2, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
 
     int margin = 10;
     int pad = 6;
@@ -189,14 +197,14 @@ static void drawLabelTopLeft(Mat& img, const string& line1, const string& line2)
     int w = max(t1.width, t2.width) + pad * 2;
     int h = (t1.height + t2.height) + pad * 2 + lineGap;
 
-    Rect box(margin, margin, min(w, img.cols - margin - 1), min(h, img.rows - margin - 1));
-    rectangle(img, box, Scalar(0, 0, 0), FILLED);
+    cv::Rect box(margin, margin, min(w, img.cols - margin - 1), min(h, img.rows - margin - 1));
+    cv::rectangle(img, box, cv::Scalar(0, 0, 0), cv::FILLED);
 
-    Point p1(margin + pad, margin + pad + t1.height);
-    Point p2(margin + pad, margin + pad + t1.height + lineGap + t2.height);
+    cv::Point p1(margin + pad, margin + pad + t1.height);
+    cv::Point p2(margin + pad, margin + pad + t1.height + lineGap + t2.height);
 
-    putText(img, line1, p1, FONT_HERSHEY_SIMPLEX, fontScale, Scalar(0, 255, 0), thickness);
-    putText(img, line2, p2, FONT_HERSHEY_SIMPLEX, fontScale, Scalar(0, 255, 0), thickness);
+    cv::putText(img, l1, p1, cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(0, 255, 0), thickness);
+    cv::putText(img, l2, p2, cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(0, 255, 0), thickness);
 }
 
 // ----------------- chunk reassembly -----------------
@@ -207,70 +215,64 @@ struct FrameBuf {
     int gotCount = 0;
     chrono::steady_clock::time_point t0;
 };
+} // namespace
 
-static void printUsage(const char* prog) {
-    cerr << "Usage: " << prog << " [phyIface=wlan0] [originatorMac(optional)]\n"
-         << "  - phyIface     : RSSI를 읽을 무선 인터페이스 (wlan0 또는 wlx...)\n"
-         << "  - originatorMac: (권장) 송신 Pi의 무선 MAC(wlan0 MAC). 있으면 멀티홉에서 TQ/relay가 정확해짐\n\n"
-         << "예) sudo " << prog << " wlan0 2c:cf:67:8c:2a:7b\n";
+// ----------------- MeshRxThread -----------------
+MeshRxThread::MeshRxThread(QObject *parent)
+    : QThread(parent)
+{
 }
 
-int main(int argc, char** argv) {
-    static const char* DEFAULT_PHY_IFACE = "wlan0";
-    static const char* DEFAULT_ORIGINATOR_MAC = "2c:cf:67:8c:2a:7b"; // 송신 Pi wlan0 MAC
+void MeshRxThread::setLinkPollEnabled(bool enable) {
+    linkPollEnabled = enable;
+}
 
-    string phyIface = DEFAULT_PHY_IFACE;
-    string originatorMac = DEFAULT_ORIGINATOR_MAC;
+void MeshRxThread::snapShot() {
+    QMutexLocker lk(&frameMtx);
+    if (lastFrameBgr.empty()) return;
 
-    if (argc >= 2) phyIface = argv[1];
-    if (argc >= 3) originatorMac = argv[2];
-    if (argc >= 2 && (string(argv[1]) == "-h" || string(argv[1]) == "--help")) {
-        printUsage(argv[0]);
-        return 0;
-    }
+    string fname = "rx_" + to_string(cnt++) + ".jpg";
+    cv::imwrite(fname, lastFrameBgr);
+    qDebug() << "[Tab7] snapshot saved:" << QString::fromStdString(fname);
+}
 
-    string hopMac = "";
-    int hopRssiDbm = 0;
-    BatRoute route;
-
-    string line1 = "HOP RSSI: N/A";
-    string line2 = "TQ: N/A";
-
-    auto lastStatusUpdate = chrono::steady_clock::now();
-
-    // 렉 누적 방지(너무 길면 프레임 버림)
-    const int FRAME_TIMEOUT_MS = 350;
-    const size_t MAX_INFLIGHT_FRAMES = 32;
-    uint32_t latestShown = 0;
-
+void MeshRxThread::run()
+{
     // UDP socket
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) { perror("socket"); return -1; }
+    if (sock < 0) { perror("socket"); return; }
 
     int reuse = 1;
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
-    int rcvbuf = 2 * 1024 * 1024;  // 8MB -> 2MB (지연/메모리 균형)
+    // receiver_fixed_tuned 튜닝: RCVBUF 2MB
+    int rcvbuf = RCVBUF_BYTES;
     setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+
+    // stop 빨리 먹게 recv timeout
+    timeval tv{};
+    tv.tv_sec = 0;
+    tv.tv_usec = 200 * 1000; // 200ms
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     sockaddr_in myAddr{}, senderAddr{};
     myAddr.sin_family = AF_INET;
-    myAddr.sin_port = htons(PORT);
+    myAddr.sin_port = htons(port);
     myAddr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     if (bind(sock, (sockaddr*)&myAddr, sizeof(myAddr)) < 0) {
         perror("bind");
-        return -1;
+        close(sock);
+        return;
     }
-
-    cout << "Receiver listening on UDP :" << PORT << "\n"
-         << "phyIface=" << phyIface;
-    if (!originatorMac.empty()) cout << ", originatorMac=" << originatorMac;
-    cout << endl;
 
     unordered_map<uint32_t, FrameBuf> frames;
     vector<uint8_t> buf(BUF_SIZE);
     socklen_t addrLen = sizeof(senderAddr);
+
+    string hopMac;
+    int hopRssiDbm = 0;
+    BatRoute route;
 
     auto cleanupOld = [&]() {
         auto now = chrono::steady_clock::now();
@@ -290,19 +292,23 @@ int main(int argc, char** argv) {
     };
 
     auto updateLinkStatus = [&]() {
-        // 1) originator가 있으면 batctl o로 nexthop/TQ 확보
+        if (!linkPollEnabled.load()) {
+            line1 = "HOP RSSI: N/A";
+            line2 = "TQ: N/A";
+            return;
+        }
+
+        // receiver_fixed_tuned 로직 그대로 반영
         hopMac.clear();
         route = BatRoute{};
-        bool haveRoute = false;
 
+        // 1) originatorMac 있으면 batctl o로 nexthop/TQ 확보
         if (!originatorMac.empty() && isMac(originatorMac)) {
             route = getBatRouteToOriginator(originatorMac);
             if (route.ok) {
-                haveRoute = true;
                 hopMac = route.nexthop;
-
-                // relay 정보는 2줄 오버레이에만 최소로 반영
-                string relay = (route.nexthop == route.originator) ? "direct" : ("via " + route.nexthop.substr(0, 8) + "..");
+                string relay = (route.nexthop == route.originator) ? "direct"
+                                                                   : ("via " + route.nexthop.substr(0, 8) + "..");
                 if (route.tq >= 0) line2 = "TQ: " + to_string(route.tq) + "/255 (" + relay + ")";
                 else line2 = "TQ: N/A (" + relay + ")";
             } else {
@@ -310,16 +316,12 @@ int main(int argc, char** argv) {
             }
         }
 
-        // 2) route가 없으면 batctl n / iw dump로 1-hop 이웃 하나 선택
+        // 2) route 없으면 batctl n / iw dump로 1-hop 이웃 하나 선택
         if (hopMac.empty()) {
             hopMac = getBestNeighborMac();
             if (hopMac.empty()) hopMac = getFirstStationMac(phyIface);
-            if (!hopMac.empty()) {
-                // relay는 모르니 hop만 표기
-                line2 = "TQ: N/A (hop " + hopMac.substr(0, 8) + "..)";
-            } else {
-                line2 = "TQ: N/A";
-            }
+            if (!hopMac.empty()) line2 = "TQ: N/A (hop " + hopMac.substr(0, 8) + "..)";
+            else line2 = "TQ: N/A";
         }
 
         // 3) RSSI는 hopMac 기준
@@ -328,29 +330,58 @@ int main(int argc, char** argv) {
         else    line1 = "HOP RSSI: N/A";
     };
 
+    auto lastLinkUpdate = chrono::steady_clock::now() - chrono::seconds(10);
+    auto lastEmit = chrono::steady_clock::now() - chrono::milliseconds(100);
+
+    uint32_t latestShown = 0;
     uint32_t recvCounter = 0;
 
-    while (true) {
-        ssize_t n = recvfrom(sock, buf.data(), buf.size(), 0, (sockaddr*)&senderAddr, &addrLen);
-        if (n < 0) { perror("recvfrom"); continue; }
-
-        // 0.5초마다 링크 상태 갱신
+    while (camViewFlag.load()) {
+        // receiver_fixed_tuned 튜닝: 0.5초마다 링크 갱신
         auto now = chrono::steady_clock::now();
-        auto ms = chrono::duration_cast<chrono::milliseconds>(now - lastStatusUpdate).count();
-        if (ms > 500) {
-            lastStatusUpdate = now;
+        if (chrono::duration_cast<chrono::milliseconds>(now - lastLinkUpdate).count() >= LINK_UPDATE_MS) {
             updateLinkStatus();
+            lastLinkUpdate = now;
         }
 
-        // 통짜 JPEG
+        ssize_t n = recvfrom(sock, buf.data(), buf.size(), 0, (sockaddr*)&senderAddr, &addrLen);
+        if (n < 0) {
+            // timeout(EAGAIN/EWOULDBLOCK)은 정상 -> 계속
+            if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+            // 그 외 에러는 로그만 찍고 계속(일시적일 수 있음)
+            // perror("recvfrom");
+            continue;
+        }
+
+        auto emitFrame = [&](cv::Mat &bgr) {
+            // snapshot용 최신 프레임 저장
+            {
+                QMutexLocker lk(&frameMtx);
+                lastFrameBgr = bgr.clone();
+            }
+
+            drawLabelTopLeft(bgr, line1, line2);
+
+            // emit fps 제한(25fps)
+            auto tnow = chrono::steady_clock::now();
+            if (chrono::duration_cast<chrono::milliseconds>(tnow - lastEmit).count() < EMIT_MIN_MS) {
+                return;
+            }
+            lastEmit = tnow;
+
+            cv::Mat rgb;
+            cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
+            QImage qimg(rgb.data, rgb.cols, rgb.rows, (int)rgb.step, QImage::Format_RGB888);
+
+            // 매우 중요: Mat 메모리와 분리
+            emit frameReady(qimg.copy());
+        };
+
+        // 통짜 JPEG도 대응
         if (n >= 2 && buf[0] == 0xFF && buf[1] == 0xD8) {
             vector<uchar> data(buf.begin(), buf.begin() + n);
-            Mat frame = imdecode(data, IMREAD_COLOR);
-            if (!frame.empty()) {
-                drawLabelTopLeft(frame, line1, line2);
-                imshow("Receiver", frame);
-                if (waitKey(1) == 'q') break;
-            }
+            cv::Mat frame = cv::imdecode(data, cv::IMREAD_COLOR);
+            if (!frame.empty()) emitFrame(frame);
             continue;
         }
 
@@ -400,17 +431,15 @@ int main(int argc, char** argv) {
             jpg.reserve(total);
             for (auto& c : fb.chunks) jpg.insert(jpg.end(), c.begin(), c.end());
 
-            Mat frame = imdecode(jpg, IMREAD_COLOR);
+            cv::Mat frame = cv::imdecode(jpg, cv::IMREAD_COLOR);
             if (!frame.empty()) {
                 latestShown = max(latestShown, frameId);
-                drawLabelTopLeft(frame, line1, line2);
-                imshow("Receiver", frame);
+                emitFrame(frame);
             }
             frames.erase(frameId);
-            if (waitKey(1) == 'q') break;
         }
     }
 
     close(sock);
-    return 0;
+    emit resetToDefault();
 }
