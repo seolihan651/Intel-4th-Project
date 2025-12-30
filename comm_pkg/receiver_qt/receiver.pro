@@ -18,3 +18,6 @@ FORMS += \
 
 INCLUDEPATH += /usr/local/include/opencv4
 LIBS += `pkg-config opencv4 --cflags --libs`
+
+RESOURCES += \
+    Images.qrc

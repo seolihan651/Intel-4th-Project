@@ -55,13 +55,15 @@ OBJECTS_DIR   = ./
 SOURCES       = main.cpp \
 		mainwidget.cpp \
 		tab7camviewer.cpp \
-		mesh_rx_thread.cpp moc_mainwidget.cpp \
+		mesh_rx_thread.cpp qrc_Images.cpp \
+		moc_mainwidget.cpp \
 		moc_tab7camviewer.cpp \
 		moc_mesh_rx_thread.cpp
 OBJECTS       = main.o \
 		mainwidget.o \
 		tab7camviewer.o \
 		mesh_rx_thread.o \
+		qrc_Images.o \
 		moc_mainwidget.o \
 		moc_tab7camviewer.o \
 		moc_mesh_rx_thread.o
@@ -115,6 +117,7 @@ DIST          = ../../pi_qt6.8.3/mkspecs/features/spec_pre.prf \
 		../../pi_qt6.8.3/mkspecs/features/qt_config.prf \
 		../../pi_qt6.8.3/mkspecs/linux-g++/qmake.conf \
 		../../pi_qt6.8.3/mkspecs/features/spec_post.prf \
+		.qmake.stash \
 		../../pi_qt6.8.3/mkspecs/features/exclusive_builds.prf \
 		../../pi_qt6.8.3/mkspecs/features/toolchain.prf \
 		../../pi_qt6.8.3/mkspecs/features/default_pre.prf \
@@ -202,6 +205,7 @@ Makefile: receiver.pro ../../pi_qt6.8.3/mkspecs/linux-g++/qmake.conf ../../pi_qt
 		../../pi_qt6.8.3/mkspecs/features/qt_config.prf \
 		../../pi_qt6.8.3/mkspecs/linux-g++/qmake.conf \
 		../../pi_qt6.8.3/mkspecs/features/spec_post.prf \
+		.qmake.stash \
 		../../pi_qt6.8.3/mkspecs/features/exclusive_builds.prf \
 		../../pi_qt6.8.3/mkspecs/features/toolchain.prf \
 		../../pi_qt6.8.3/mkspecs/features/default_pre.prf \
@@ -223,6 +227,7 @@ Makefile: receiver.pro ../../pi_qt6.8.3/mkspecs/linux-g++/qmake.conf ../../pi_qt
 		../../pi_qt6.8.3/mkspecs/features/yacc.prf \
 		../../pi_qt6.8.3/mkspecs/features/lex.prf \
 		receiver.pro \
+		Images.qrc \
 		../../pi_qt6.8.3/lib/libQt6Widgets.prl \
 		../../pi_qt6.8.3/lib/libQt6Gui.prl \
 		../../pi_qt6.8.3/lib/libQt6Core.prl
@@ -277,6 +282,7 @@ Makefile: receiver.pro ../../pi_qt6.8.3/mkspecs/linux-g++/qmake.conf ../../pi_qt
 ../../pi_qt6.8.3/mkspecs/features/qt_config.prf:
 ../../pi_qt6.8.3/mkspecs/linux-g++/qmake.conf:
 ../../pi_qt6.8.3/mkspecs/features/spec_post.prf:
+.qmake.stash:
 ../../pi_qt6.8.3/mkspecs/features/exclusive_builds.prf:
 ../../pi_qt6.8.3/mkspecs/features/toolchain.prf:
 ../../pi_qt6.8.3/mkspecs/features/default_pre.prf:
@@ -298,6 +304,7 @@ Makefile: receiver.pro ../../pi_qt6.8.3/mkspecs/linux-g++/qmake.conf ../../pi_qt
 ../../pi_qt6.8.3/mkspecs/features/yacc.prf:
 ../../pi_qt6.8.3/mkspecs/features/lex.prf:
 receiver.pro:
+Images.qrc:
 ../../pi_qt6.8.3/lib/libQt6Widgets.prl:
 ../../pi_qt6.8.3/lib/libQt6Gui.prl:
 ../../pi_qt6.8.3/lib/libQt6Core.prl:
@@ -315,6 +322,7 @@ dist: distdir FORCE
 distdir: FORCE
 	@test -d $(DISTDIR) || mkdir -p $(DISTDIR)
 	$(COPY_FILE) --parents $(DIST) $(DISTDIR)/
+	$(COPY_FILE) --parents Images.qrc $(DISTDIR)/
 	$(COPY_FILE) --parents ../../pi_qt6.8.3/mkspecs/features/data/dummy.cpp $(DISTDIR)/
 	$(COPY_FILE) --parents mainwidget.h tab7camviewer.h mesh_rx_thread.h $(DISTDIR)/
 	$(COPY_FILE) --parents main.cpp mainwidget.cpp tab7camviewer.cpp mesh_rx_thread.cpp $(DISTDIR)/
@@ -342,8 +350,15 @@ check: first
 
 benchmark: first
 
-compiler_rcc_make_all:
+compiler_rcc_make_all: qrc_Images.cpp
 compiler_rcc_clean:
+	-$(DEL_FILE) qrc_Images.cpp
+qrc_Images.cpp: Images.qrc \
+		../../pi_qt6.8.3/libexec/rcc \
+		Images/WIFI_ON.png \
+		Images/WIFI_OFF.png
+	/home/pi/pi_qt6.8.3/libexec/rcc -name Images Images.qrc -o qrc_Images.cpp
+
 compiler_moc_predefs_make_all: moc_predefs.h
 compiler_moc_predefs_clean:
 	-$(DEL_FILE) moc_predefs.h
@@ -547,6 +562,10 @@ moc_mainwidget.cpp: mainwidget.h \
 		../../pi_qt6.8.3/include/QtCore/QProcess \
 		../../pi_qt6.8.3/include/QtCore/qprocess.h \
 		../../pi_qt6.8.3/include/QtCore/QString \
+		../../pi_qt6.8.3/include/QtCore/QHash \
+		../../pi_qt6.8.3/include/QtCore/QTimer \
+		../../pi_qt6.8.3/include/QtCore/qtimer.h \
+		../../pi_qt6.8.3/include/QtCore/qbasictimer.h \
 		mesh_rx_thread.h \
 		../../pi_qt6.8.3/include/QtCore/QThread \
 		../../pi_qt6.8.3/include/QtGui/QImage \
@@ -748,6 +767,10 @@ moc_tab7camviewer.cpp: tab7camviewer.h \
 		../../pi_qt6.8.3/include/QtCore/QProcess \
 		../../pi_qt6.8.3/include/QtCore/qprocess.h \
 		../../pi_qt6.8.3/include/QtCore/QString \
+		../../pi_qt6.8.3/include/QtCore/QHash \
+		../../pi_qt6.8.3/include/QtCore/QTimer \
+		../../pi_qt6.8.3/include/QtCore/qtimer.h \
+		../../pi_qt6.8.3/include/QtCore/qbasictimer.h \
 		mesh_rx_thread.h \
 		../../pi_qt6.8.3/include/QtCore/QThread \
 		../../pi_qt6.8.3/include/QtGui/QImage \
@@ -912,7 +935,7 @@ compiler_yacc_impl_make_all:
 compiler_yacc_impl_clean:
 compiler_lex_make_all:
 compiler_lex_clean:
-compiler_clean: compiler_moc_predefs_clean compiler_moc_header_clean compiler_uic_clean 
+compiler_clean: compiler_rcc_clean compiler_moc_predefs_clean compiler_moc_header_clean compiler_uic_clean 
 
 ####### Compile
 
@@ -1110,6 +1133,10 @@ main.o: main.cpp mainwidget.h \
 		../../pi_qt6.8.3/include/QtCore/QProcess \
 		../../pi_qt6.8.3/include/QtCore/qprocess.h \
 		../../pi_qt6.8.3/include/QtCore/QString \
+		../../pi_qt6.8.3/include/QtCore/QHash \
+		../../pi_qt6.8.3/include/QtCore/QTimer \
+		../../pi_qt6.8.3/include/QtCore/qtimer.h \
+		../../pi_qt6.8.3/include/QtCore/qbasictimer.h \
 		mesh_rx_thread.h \
 		../../pi_qt6.8.3/include/QtCore/QThread \
 		../../pi_qt6.8.3/include/QtGui/QImage \
@@ -1312,6 +1339,10 @@ mainwidget.o: mainwidget.cpp mainwidget.h \
 		../../pi_qt6.8.3/include/QtCore/QProcess \
 		../../pi_qt6.8.3/include/QtCore/qprocess.h \
 		../../pi_qt6.8.3/include/QtCore/QString \
+		../../pi_qt6.8.3/include/QtCore/QHash \
+		../../pi_qt6.8.3/include/QtCore/QTimer \
+		../../pi_qt6.8.3/include/QtCore/qtimer.h \
+		../../pi_qt6.8.3/include/QtCore/qbasictimer.h \
 		mesh_rx_thread.h \
 		../../pi_qt6.8.3/include/QtCore/QThread \
 		../../pi_qt6.8.3/include/QtGui/QImage \
@@ -1522,6 +1553,10 @@ tab7camviewer.o: tab7camviewer.cpp tab7camviewer.h \
 		../../pi_qt6.8.3/include/QtCore/QProcess \
 		../../pi_qt6.8.3/include/QtCore/qprocess.h \
 		../../pi_qt6.8.3/include/QtCore/QString \
+		../../pi_qt6.8.3/include/QtCore/QHash \
+		../../pi_qt6.8.3/include/QtCore/QTimer \
+		../../pi_qt6.8.3/include/QtCore/qtimer.h \
+		../../pi_qt6.8.3/include/QtCore/qbasictimer.h \
 		mesh_rx_thread.h \
 		../../pi_qt6.8.3/include/QtCore/QThread \
 		../../pi_qt6.8.3/include/QtGui/QImage \
@@ -1530,9 +1565,8 @@ tab7camviewer.o: tab7camviewer.cpp tab7camviewer.h \
 		../../pi_qt6.8.3/include/QtCore/QVariant \
 		../../pi_qt6.8.3/include/QtWidgets/QApplication \
 		../../pi_qt6.8.3/include/QtWidgets/qapplication.h \
-		../../pi_qt6.8.3/include/QtWidgets/QCheckBox \
-		../../pi_qt6.8.3/include/QtWidgets/qcheckbox.h \
-		../../pi_qt6.8.3/include/QtWidgets/qabstractbutton.h \
+		../../pi_qt6.8.3/include/QtWidgets/QFrame \
+		../../pi_qt6.8.3/include/QtWidgets/qframe.h \
 		../../pi_qt6.8.3/include/QtWidgets/QHBoxLayout \
 		../../pi_qt6.8.3/include/QtWidgets/qboxlayout.h \
 		../../pi_qt6.8.3/include/QtWidgets/qlayout.h \
@@ -1540,18 +1574,38 @@ tab7camviewer.o: tab7camviewer.cpp tab7camviewer.h \
 		../../pi_qt6.8.3/include/QtWidgets/qgridlayout.h \
 		../../pi_qt6.8.3/include/QtWidgets/QLabel \
 		../../pi_qt6.8.3/include/QtWidgets/qlabel.h \
-		../../pi_qt6.8.3/include/QtWidgets/qframe.h \
 		../../pi_qt6.8.3/include/QtGui/qpicture.h \
 		../../pi_qt6.8.3/include/QtGui/qtextdocument.h \
+		../../pi_qt6.8.3/include/QtWidgets/QPlainTextEdit \
+		../../pi_qt6.8.3/include/QtWidgets/qplaintextedit.h \
+		../../pi_qt6.8.3/include/QtWidgets/qtextedit.h \
+		../../pi_qt6.8.3/include/QtWidgets/qabstractscrollarea.h \
+		../../pi_qt6.8.3/include/QtGui/qtextoption.h \
+		../../pi_qt6.8.3/include/QtGui/qtextcursor.h \
+		../../pi_qt6.8.3/include/QtGui/qtextformat.h \
+		../../pi_qt6.8.3/include/QtGui/qpen.h \
+		../../pi_qt6.8.3/include/QtGui/qabstracttextdocumentlayout.h \
+		../../pi_qt6.8.3/include/QtGui/qtextlayout.h \
+		../../pi_qt6.8.3/include/QtGui/qglyphrun.h \
+		../../pi_qt6.8.3/include/QtGui/qrawfont.h \
+		../../pi_qt6.8.3/include/QtGui/qfontdatabase.h \
+		../../pi_qt6.8.3/include/QtWidgets/QProgressBar \
+		../../pi_qt6.8.3/include/QtWidgets/qprogressbar.h \
 		../../pi_qt6.8.3/include/QtWidgets/QPushButton \
 		../../pi_qt6.8.3/include/QtWidgets/qpushbutton.h \
+		../../pi_qt6.8.3/include/QtWidgets/qabstractbutton.h \
 		../../pi_qt6.8.3/include/QtWidgets/QVBoxLayout \
 		../../pi_qt6.8.3/include/QtGui/QPixmap \
 		../../pi_qt6.8.3/include/QtWidgets/QMessageBox \
 		../../pi_qt6.8.3/include/QtWidgets/qmessagebox.h \
 		../../pi_qt6.8.3/include/QtWidgets/qdialog.h \
 		../../pi_qt6.8.3/include/QtWidgets/qdialogbuttonbox.h \
-		../../pi_qt6.8.3/include/QtCore/QDebug
+		../../pi_qt6.8.3/include/QtCore/QDebug \
+		../../pi_qt6.8.3/include/QtCore/QRegularExpression \
+		../../pi_qt6.8.3/include/QtCore/qregularexpression.h \
+		../../pi_qt6.8.3/include/QtCore/QDateTime \
+		../../pi_qt6.8.3/include/QtCore/qdatetime.h \
+		../../pi_qt6.8.3/include/QtCore/qcalendar.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o tab7camviewer.o tab7camviewer.cpp
 
 mesh_rx_thread.o: mesh_rx_thread.cpp mesh_rx_thread.h \
@@ -1698,6 +1752,9 @@ mesh_rx_thread.o: mesh_rx_thread.cpp mesh_rx_thread.h \
 		../../pi_qt6.8.3/include/QtCore/qhash.h \
 		../../pi_qt6.8.3/include/QtCore/qvarlengtharray.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o mesh_rx_thread.o mesh_rx_thread.cpp
+
+qrc_Images.o: qrc_Images.cpp 
+	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o qrc_Images.o qrc_Images.cpp
 
 moc_mainwidget.o: moc_mainwidget.cpp 
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o moc_mainwidget.o moc_mainwidget.cpp

@@ -6,6 +6,9 @@
 #include <QThread>
 #include <QMessageBox>
 #include <QDebug>
+#include <QRegularExpression>
+#include <QDateTime>
+
 
 Tab7CamViewer::Tab7CamViewer(QWidget *parent)
     : QWidget(parent)
@@ -16,7 +19,7 @@ Tab7CamViewer::Tab7CamViewer(QWidget *parent)
 
     // 초기 UI
     //ui->pPBsnapShot->setEnabled(false);
-    ui->pCBrgb->setEnabled(false);
+
 
     // RX Thread
     pMeshRxThread = new MeshRxThread(this);
@@ -41,10 +44,40 @@ Tab7CamViewer::Tab7CamViewer(QWidget *parent)
             },
             Qt::QueuedConnection);
 
+    connect(pMeshRxThread, &MeshRxThread::linkUpdated, this, &Tab7CamViewer::onLinkUpdated,Qt::QueuedConnection);
+    connect(pMeshRxThread, &MeshRxThread::deviceInfoUpdated, this,
+            [this](const QString &text){
+                ui->QlabeDeviceInfo->setText(text);   // ✅ 지금 ui는 QLabel
+            }, Qt::QueuedConnection);
+
+    //Toggle Cam 설정
+    ui->pPBtoggleCam->setText("");
+    ui->pPBtoggleCam->setCheckable(true);
+    ui->pPBtoggleCam->setText("");
+    ui->pPBtoggleCam->setFixedSize(56, 30);
+    ui->pPBtoggleCam->setStyleSheet(R"(
+    QPushButton {
+    border: 1px solid #444;
+    border-radius: 15px;
+    background: #666;
+    }
+    QPushButton:checked {
+    background: #2196F3;
+    border: 1px solid #1f9f54;
+    }S
+    )");
+    ui->QlabelWIFIStatusIcon->setPixmap(QPixmap(":/Images/WIFI_OFF.png"));
+
+
     // mesh on/off runner
     meshProc = new QProcess(this);
     connect(meshProc, &QProcess::finished, this, &Tab7CamViewer::onMeshProcFinished);
     connect(meshProc, &QProcess::errorOccurred, this, &Tab7CamViewer::onMeshProcError);
+
+
+
+
+    resetLinkUi();
 }
 
 Tab7CamViewer::~Tab7CamViewer()
@@ -56,47 +89,6 @@ Tab7CamViewer::~Tab7CamViewer()
     delete ui;
 }
 
-void Tab7CamViewer::setUiBusy(const QString &msg)
-{
-    ui->pPBcamStart->setEnabled(false);
-    ui->pPBcamStart->setText(msg);
-
-    //ui->pPBsnapShot->setEnabled(false);
-    ui->pCBrgb->setEnabled(false);
-}
-
-void Tab7CamViewer::setUiRunning(bool running)
-{
-    ui->pPBcamStart->setEnabled(true);
-    ui->pPBcamStart->setChecked(running);
-    ui->pPBcamStart->setText(running ? "CamStop" : "CamStart");
-
-    //ui->pPBsnapShot->setEnabled(running);
-    ui->pCBrgb->setEnabled(running);
-}
-
-void Tab7CamViewer::on_pPBcamStart_clicked(bool checked)
-{
-    // 이미 mesh script가 도는 중이면 무시
-    if (meshProc && meshProc->state() != QProcess::NotRunning) {
-        // 버튼 상태 되돌리기
-        ui->pPBcamStart->setChecked(!checked);
-        return;
-    }
-
-    if (checked) {
-        // 1) mesh_on 실행 → 2) 성공 시 receiver 시작
-        setUiBusy("MeshOn...");
-        runMeshOn();
-    } else {
-        // 1) receiver 정지 → 2) mesh_off 실행 → 3) UI 원복
-        setUiBusy("Stopping...");
-        stopReceiver();
-
-        setUiBusy("MeshOff...");
-        runMeshOff();
-    }
-}
 
 void Tab7CamViewer::runMeshOn()
 {
@@ -133,7 +125,7 @@ void Tab7CamViewer::onMeshProcFinished(int exitCode, QProcess::ExitStatus status
 
     if (status != QProcess::NormalExit || exitCode != 0) {
         // 실패 시 UI 복구
-        setUiRunning(false);
+        //setUiRunning(false);
 
         // mesh_on 실패면 영상 수신도 시작하면 안됨
         QString title = (meshAction == MeshAction::On) ? "mesh_on failed" : "mesh_off failed";
@@ -148,10 +140,10 @@ void Tab7CamViewer::onMeshProcFinished(int exitCode, QProcess::ExitStatus status
     if (meshAction == MeshAction::On) {
         // mesh 올라왔으니 수신 시작
         startReceiver();
-        setUiRunning(true);
+        //setUiRunning(true);
     } else if (meshAction == MeshAction::Off) {
         // mesh 내렸으니 UI 완전 초기화
-        setUiRunning(false);
+        //setUiRunning(false);
     }
 
     meshAction = MeshAction::None;
@@ -160,7 +152,7 @@ void Tab7CamViewer::onMeshProcFinished(int exitCode, QProcess::ExitStatus status
 void Tab7CamViewer::onMeshProcError(QProcess::ProcessError err)
 {
     qDebug() << "[mesh] process error:" << err;
-    setUiRunning(false);
+    //setUiRunning(false);
 
     QMessageBox::warning(this, "mesh script error",
                          "mesh_on/off 실행 중 오류가 발생했습니다.\n"
@@ -180,9 +172,10 @@ void Tab7CamViewer::startReceiver()
     pMeshRxThread->originatorMac = "2c:cf:67:8c:2a:7b"; // TODO: 송신Pi MAC으로 변경
     pMeshRxThread->port = 9999;
 
-    // RSSI/TQ 폴링 ON/OFF (체크박스 상태 반영)
-    pMeshRxThread->setLinkPollEnabled(ui->pCBrgb->isChecked());
 
+    // RSSI/TQ 폴링 ON/OFF (체크박스 상태 반영)
+    pMeshRxThread->setLinkPollEnabled(ui->pPBtoggleCam->isChecked());
+    pMeshRxThread->setLinkPollEnabled(true);
     pMeshRxThread->camViewFlag = true;
     pMeshRxThread->start();
 }
@@ -192,33 +185,176 @@ void Tab7CamViewer::stopReceiver()
     if (!pMeshRxThread) return;
 
     pMeshRxThread->camViewFlag = false;
+
     if (pMeshRxThread->isRunning()) {
         // 너무 길게 기다리지 않게(환경 따라 조절)
         pMeshRxThread->wait(1500);
     }
 }
 
-// void Tab7CamViewer::on_pPBsnapShot_clicked()
-// {
-//     if (pMeshRxThread) pMeshRxThread->snapShot();
-// }
 
-void Tab7CamViewer::on_pCBrgb_clicked(bool checked)
+void Tab7CamViewer::on_pPBtoggleCam_clicked(bool checked)
 {
-    // 체크박스를 RSSI/TQ 갱신 ON/OFF로 사용
+
     if (pMeshRxThread) pMeshRxThread->setLinkPollEnabled(checked);
+
+    // 이미 mesh script가 도는 중이면 무시
+    if (meshProc && meshProc->state() != QProcess::NotRunning) {
+        // 버튼 상태 되돌리기
+        ui->pPBtoggleCam->setChecked(!checked);
+        return;
+    }
+
+    if (checked) {
+        // 1) mesh_on 실행 → 2) 성공 시 receiver 시작
+        //setUiBusy("MeshOn...");
+        runMeshOn();
+    } else {
+        // 1) receiver 정지 → 2) mesh_off 실행 → 3) UI 원복
+        //setUiBusy("Stopping...");
+        resetLinkUi();
+        stopReceiver();
+
+        //setUiBusy("MeshOff...");
+        runMeshOff();
+
+    }
+}
+void Tab7CamViewer::setWifiIcon(bool connected)
+{
+    const QString path = connected ? ":/Images/WIFI_ON.png" : ":/Images/WIFI_OFF.png";
+
+    if(connected) ui->QlabelWiFiStatus->setText("Connect");
+    else ui->QlabelWiFiStatus->setText("Uncnnect");
+
+    QPixmap pm(path);
+    ui->QlabelWIFIStatusIcon->setPixmap(pm.scaled(ui->QlabelWIFIStatusIcon->size(),Qt::KeepAspectRatio,Qt::SmoothTransformation));
+
 }
 
-void Tab7CamViewer::tab7RecvDataSlot(QString recvData)
+
+
+void Tab7CamViewer::resetLinkUi()
 {
-    // 예: @ID@SNAPSHOT 같은 프로토콜이 들어오는 경우만 처리
-    QStringList strList = recvData.split("@");
-    if (strList.size() >= 3 && strList[2] == "SNAPSHOT") {
-        if (!ui->pPBcamStart->isChecked()) {
-            ui->pPBcamStart->setChecked(true);
-            on_pPBcamStart_clicked(true);
-            QThread::msleep(500);
-        }
-        //on_pPBsnapShot_clicked();
+    setWifiIcon(false);
+    ui->pTQValuebar->setValue(0);
+    ui->pTQValuebar->setFormat("0/255");
+}
+
+void Tab7CamViewer::onLinkUpdated(int tq)
+{
+    ui->pTQValuebar->setRange(0,255);
+
+    const bool connected = (tq >= 0);
+    setWifiIcon(connected);
+
+    if (connected) {
+        ui->pTQValuebar->setValue(tq);
+        ui->pTQValuebar->setFormat(QString("%1/255").arg(tq));
+    } else {
+        ui->pTQValuebar->setValue(0);
+        ui->pTQValuebar->setFormat("0/255");
     }
+
+}
+
+// 1) 타이머 시작/정지 (토글 ON/OFF에 맞춰 호출 추천)
+void Tab7CamViewer::startDeviceInfoTimer()
+{
+    if (!m_devTimer) {
+        m_devTimer = new QTimer(this);
+        m_devTimer->setInterval(1000); // 1초
+        connect(m_devTimer, &QTimer::timeout, this, &Tab7CamViewer::updateDeviceInfo);
+    }
+    m_devTimer->start();
+    updateDeviceInfo(); // 바로 1회 갱신
+}
+
+void Tab7CamViewer::stopDeviceInfoTimer()
+{
+    if (m_devTimer) m_devTimer->stop();
+}
+
+// 2) 1초마다 호출되는 엔트리
+void Tab7CamViewer::updateDeviceInfo()
+{
+    // 프로세스 겹침 방지
+    if (m_batProc && m_batProc->state() != QProcess::NotRunning) return;
+    if (m_neighProc && m_neighProc->state() != QProcess::NotRunning) return;
+
+    runBatctlO(); // batctl o -> 끝나면 ip neigh 실행 -> 끝나면 render
+}
+
+// 3) batctl o 실행 & 파싱
+void Tab7CamViewer::runBatctlO()
+{
+    if (!m_batProc) {
+        m_batProc = new QProcess(this);
+        connect(m_batProc, QOverload<int,QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this](int, QProcess::ExitStatus){
+                    const QString out = QString::fromUtf8(m_batProc->readAllStandardOutput());
+                    m_macs.clear();
+
+                    // 예: "* 2c:cf:67:8c:2a:7b  2.780s  ( 93) ..."
+                    QRegularExpression re(R"(^\s*[* ]\s*([0-9a-fA-F:]{17})\b)");
+                    for (const QString &line : out.split('\n')) {
+                        auto m = re.match(line);
+                        if (m.hasMatch()) {
+                            QString mac = m.captured(1).toLower();
+                            if (!m_macs.contains(mac))
+                                m_macs << mac;
+                        }
+                    }
+
+                    runIpNeigh();
+                });
+    }
+
+    // 권한 문제 있으면 batctl이 비어올 수 있어 (setcap / sudo 필요)
+    m_batProc->start("batctl", QStringList() << "o");
+}
+
+// 4) ip neigh 실행 & 파싱 (IP가 없으면 Unknown 유지)
+void Tab7CamViewer::runIpNeigh()
+{
+    if (!m_neighProc) {
+        m_neighProc = new QProcess(this);
+        connect(m_neighProc, QOverload<int,QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this](int, QProcess::ExitStatus){
+                    const QString out = QString::fromUtf8(m_neighProc->readAllStandardOutput());
+                    m_macToIp.clear();
+
+                    // 예: "10.10.14.79 dev bat0 lladdr 00:14:1b:... REACHABLE"
+                    QRegularExpression re(R"(^\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\s+dev\s+bat0\s+lladdr\s+([0-9a-fA-F:]{17})\b)");
+                    for (const QString &line : out.split('\n')) {
+                        auto m = re.match(line);
+                        if (m.hasMatch()) {
+                            QString ip  = m.captured(1);
+                            QString mac = m.captured(2).toLower();
+                            m_macToIp.insert(mac, ip);
+                        }
+                    }
+                    renderDeviceInfo();
+                });
+    }
+
+    m_neighProc->start("ip", QStringList() << "neigh" << "show" << "dev" << "bat0");
+}
+
+// 5) 화면 출력
+void Tab7CamViewer::renderDeviceInfo()
+{
+    QString text;
+    text += QString("DEVICE INFO (%1 Devices)\n\n").arg(m_macs.size());
+
+    int idx = 1;
+    for (const QString &mac : m_macs) {
+        const QString ip = m_macToIp.value(mac, "Unknown");
+        text += QString("Device %1  MAC %2\n").arg(idx++).arg(mac);
+        text += QString("         IP  %1\n\n").arg(ip);
+    }
+
+    // ui에 QPlainTextEdit 하나 만들어서 objectName 예: pDeviceInfoText
+    ui->pDeviceInfoText->setPlainText(text);
+
 }

@@ -30,6 +30,11 @@ signals:
     void frameReady(const QImage &img);  // UI 스레드에서 setPixmap
     void resetToDefault();              // 종료 시 기본 이미지로
 
+    //TQ 전달용 시그널
+    void linkUpdated(int tq);
+
+    void deviceInfoUpdated(const QString &text);
+
 protected:
     void run() override;
 
@@ -44,6 +49,10 @@ private:
     // overlay 텍스트
     std::string line1 = "HOP RSSI: N/A";
     std::string line2 = "TQ: N/A";
+
+    // TQ 전달용 저장 변수
+    std::atomic<int>lastTq{-1};
+
 };
 
 #endif // MESH_RX_THREAD_H

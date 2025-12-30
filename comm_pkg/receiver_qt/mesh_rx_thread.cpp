@@ -15,6 +15,10 @@
 #include <sys/time.h>
 #include <errno.h>
 
+#include <algorithm>
+#include <unordered_map>
+#include <sstream>
+
 using namespace std;
 
 namespace {
@@ -181,6 +185,42 @@ static string getBestNeighborMac() {
     return bestMac;
 }
 
+// last-seen 뽑는 함수
+struct NeighborSeen {
+    std::string mac;
+    double seenSec; // last-seen seconds
+};
+
+static std::vector<NeighborSeen> getNeighborsWithSeen()
+{
+    std::vector<NeighborSeen> v;
+    std::string out = runCmd("batctl n 2>/dev/null");
+    if (out.empty()) return v;
+
+    std::istringstream iss(out);
+    std::string line;
+
+    while (std::getline(iss, line)) {
+        if (line.find("Neighbor") != std::string::npos) continue; // header skip
+
+        std::istringstream ls(line);
+        std::string ifname, mac, last;
+        ls >> ifname >> mac >> last;
+
+        if (!isMac(mac)) continue;
+        if (last.empty() || last.back() != 's') continue;
+
+        double seen = 0.0;
+        try { seen = std::stod(last.substr(0, last.size() - 1)); }
+        catch (...) { continue; }
+
+        v.push_back({mac, seen});
+    }
+    return v;
+}
+
+
+
 // ---- minimal overlay (top-left only) ----
 static void drawLabelTopLeft(cv::Mat& img, const string& l1, const string& l2) {
     double fontScale = 0.8;
@@ -216,6 +256,41 @@ struct FrameBuf {
     chrono::steady_clock::time_point t0;
 };
 } // namespace
+
+#include <unordered_map>
+#include <sstream>
+
+#include <unordered_map>
+#include <sstream>
+
+static std::unordered_map<std::string, std::string> getMacToIpBat0()
+{
+    std::unordered_map<std::string, std::string> mac2ip;
+
+    std::string out = runCmd("ip neigh show dev bat0 2>/dev/null");
+    if (out.empty()) return mac2ip;
+
+    std::istringstream iss(out);
+    std::string line;
+
+    while (std::getline(iss, line)) {
+        // 10.10.14.79 dev bat0 lladdr 00:14:1b:... REACHABLE
+        std::istringstream ls(line);
+        std::string ip, dev, ifname, lladdr, mac;
+        ls >> ip >> dev >> ifname >> lladdr >> mac;
+
+        if (ip.empty() || mac.empty()) continue;
+        if (ifname != "bat0") continue;
+        if (lladdr != "lladdr") continue;
+        if (!isMac(mac)) continue;
+
+        mac2ip[mac] = ip;
+    }
+    return mac2ip;
+}
+
+
+
 
 // ----------------- MeshRxThread -----------------
 MeshRxThread::MeshRxThread(QObject *parent)
@@ -276,6 +351,8 @@ void MeshRxThread::run()
 
     auto cleanupOld = [&]() {
         auto now = chrono::steady_clock::now();
+
+
         for (auto it = frames.begin(); it != frames.end();) {
             auto age = chrono::duration_cast<chrono::milliseconds>(now - it->second.t0).count();
             if (age > FRAME_TIMEOUT_MS) it = frames.erase(it);
@@ -292,11 +369,24 @@ void MeshRxThread::run()
     };
 
     auto updateLinkStatus = [&]() {
-        if (!linkPollEnabled.load()) {
+        //if (!linkPollEnabled.load()) {
             line1 = "HOP RSSI: N/A";
             line2 = "TQ: N/A";
-            return;
-        }
+
+            // TQ 값 probar에 전달하기 위해 추가
+            int tqNow =(route.ok ? route.tq : -1);
+
+            if(tqNow !=lastTq.load())
+            {
+                lastTq=tqNow;
+                emit linkUpdated(tqNow);
+            }
+
+    auto lastLinkUpdate = chrono::steady_clock::now() - chrono::seconds(10);
+    auto lastEmit = chrono::steady_clock::now() - chrono::milliseconds(100);
+
+          //  return;
+        //}
 
         // receiver_fixed_tuned 로직 그대로 반영
         hopMac.clear();
@@ -330,10 +420,83 @@ void MeshRxThread::run()
         else    line1 = "HOP RSSI: N/A";
     };
 
+    auto updateDeviceInfo = [&]() {
+        // 1) batctl o 에서 MAC 목록 뽑기
+        vector<string> macs;
+        {
+            string out = runCmd("batctl o 2>/dev/null");
+            istringstream iss(out);
+            string line;
+            while (getline(iss, line)) {
+                string s = trim(line);
+                if (s.empty()) continue;
+
+                // 토큰화해서 첫 MAC 찾기 (형태: "* 2c:cf:...  2.7s (93) ...")
+                istringstream ls(s);
+                string tok;
+                while (ls >> tok) {
+                    if (isMac(tok)) {
+                        // 중복 방지
+                        bool dup = false;
+                        for (auto &m : macs) { if (m == tok) { dup = true; break; } }
+                        if (!dup) macs.push_back(tok);
+                        break;
+                    }
+                }
+            }
+        }
+
+
+        auto neigh = getNeighborsWithSeen();
+
+        neigh.erase(std::remove_if(neigh.begin(), neigh.end(),
+                                   [](const NeighborSeen& n){ return n.seenSec > 60.0; }),
+                    neigh.end());
+
+        //auto mac2ip = getMacToIpBat0();
+
+        // 2) ip neigh show dev bat0 에서 MAC->IP 맵 만들기
+        unordered_map<string,string> mac2ip;
+        {
+            string out = runCmd("ip neigh show dev bat0 2>/dev/null");
+            istringstream iss(out);
+            string line;
+            while (getline(iss, line)) {
+                // 예: 10.10.14.79 dev bat0 lladdr 00:14:1b:... REACHABLE
+                istringstream ls(line);
+                string ip, dev, ifname, lladdr, mac;
+                ls >> ip >> dev >> ifname >> lladdr >> mac;
+                if (ip.empty() || mac.empty()) continue;
+                if (ifname != "bat0") continue;
+                if (lladdr != "lladdr") continue;
+                if (!isMac(mac)) continue;
+                mac2ip[mac] = ip;
+            }
+        }
+
+        // 3) 문자열 구성 (Unknown 허용)
+        QString text;
+        text += QString("DEVICE INFO (%1 Devices)\n\n").arg((int)macs.size());
+
+        int idx = 1;
+        for (auto &mac : macs) {
+            QString qmac = QString::fromStdString(mac);
+            QString ip = "Unknown";
+            auto it = mac2ip.find(mac);
+            if (it != mac2ip.end()) ip = QString::fromStdString(it->second);
+
+            text += QString("Device %1  MAC %2\n").arg(idx++).arg(qmac);
+            text += QString("         IP  %1\n\n").arg(ip);
+        }
+
+        emit deviceInfoUpdated(text);
+    };
+
     auto lastLinkUpdate = chrono::steady_clock::now() - chrono::seconds(10);
+    auto lastDevUpdate  = chrono::steady_clock::now() - chrono::seconds(10);
     auto lastEmit = chrono::steady_clock::now() - chrono::milliseconds(100);
 
-    uint32_t latestShown = 0;
+    uint32_t latestShown =0;
     uint32_t recvCounter = 0;
 
     while (camViewFlag.load()) {
@@ -343,6 +506,11 @@ void MeshRxThread::run()
             updateLinkStatus();
             lastLinkUpdate = now;
         }
+        if (chrono::duration_cast<chrono::milliseconds>(now - lastDevUpdate).count() >= 1000) {
+            updateDeviceInfo();
+            lastDevUpdate = now;
+        }
+
 
         ssize_t n = recvfrom(sock, buf.data(), buf.size(), 0, (sockaddr*)&senderAddr, &addrLen);
         if (n < 0) {
