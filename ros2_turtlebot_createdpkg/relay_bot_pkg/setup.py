@@ -28,8 +28,8 @@ setup(
     entry_points={
         'console_scripts': [
             'relay_bot = relay_bot_pkg.reactive_node:main',
-            'mesh_rssi_publisher = relay_bot_pkg.mesh_rssi_publisher:main',
-            'twist_rssi_sim = relay_bot_pkg.rssi_simulator_twist:main',
+            'mesh_tq_publisher = relay_bot_pkg.mesh_tq_publisher:main',
+            'tq_simulator = relay_bot_pkg.tq_simulator_twist:main',
         ],
     },
 )

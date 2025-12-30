@@ -2,13 +2,13 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int32
 from nav_msgs.msg import Odometry
-# [수정 1] DeleteEntity 추가
 from gazebo_msgs.srv import SpawnEntity, SetEntityState, DeleteEntity
 from geometry_msgs.msg import Pose, Point, Quaternion, Twist
 import math
 import random
 import time
 
+# 시각적 확인을 위한 Gazebo 모델 (변경 없음)
 CAM_SDF = """
 <sdf version='1.6'>
   <model name='virtual_camera'>
@@ -39,18 +39,15 @@ PC_SDF = """
 </sdf>
 """
 
-class RssiSimulatorTwist(Node):
+class TqSimulatorTwist(Node):
     def __init__(self):
-        super().__init__('rssi_simulator_twist')
+        super().__init__('tq_simulator_twist')
 
         # --- 설정 ---
-        self.pc_position = (-2.0, 0.0)
+        self.pc_position = (-2.0, 0.0) # PC 위치 고정
         
-        self.cam_x = 2.0
+        self.cam_x = 2.0  # 가상 카메라(타겟) 초기 위치
         self.cam_y = 0.0
-        
-        self.tx_power = -30
-        self.path_loss_exponent = 3.5
         
         # --- 상태 변수 ---
         self.robot_x = 0.0
@@ -63,23 +60,25 @@ class RssiSimulatorTwist(Node):
         self.odom_sub = self.create_subscription(
             Odometry, 'odom', self.odom_callback, 10)
 
+        # 가상 카메라를 움직이기 위한 토픽
         self.cam_cmd_sub = self.create_subscription(
             Twist, 'cmd_vel_cam', self.cam_cmd_callback, 10)
 
-        self.pub_rssi_pc = self.create_publisher(Int32, 'rssi/pc', 10)
-        self.pub_rssi_cam = self.create_publisher(Int32, 'rssi/cam', 10)
+        # [중요] 이름은 rssi/pc 지만 실제 데이터는 TQ (0~255)
+        self.pub_tq_pc = self.create_publisher(Int32, 'tq/pc', 10)
+        self.pub_tq_cam = self.create_publisher(Int32, 'tq/cam', 10)
 
         # --- Gazebo 클라이언트 ---
         self.spawn_client = self.create_client(SpawnEntity, '/spawn_entity')
         self.set_state_client = self.create_client(SetEntityState, '/gazebo/set_entity_state')
-        # [수정 2] 삭제용 클라이언트 생성
         self.del_client = self.create_client(DeleteEntity, '/delete_entity')
         
-        self.timer = self.create_timer(0.1, self.update_rssi)
+        self.timer = self.create_timer(0.1, self.update_tq)
         
-        self.get_logger().info("🎮 Manual RSSI Simulator Started. Waiting for cmd_vel_cam...")
+        self.get_logger().info("🦇 TQ Simulator Started. (Range: 0-255)")
 
     def cam_cmd_callback(self, msg):
+        # 가상 카메라 위치 이동 (WASD로 조종 가능하게)
         step_scale = 0.5
         self.cam_x += msg.linear.x * step_scale
         self.cam_y += msg.angular.z * step_scale 
@@ -115,15 +114,12 @@ class RssiSimulatorTwist(Node):
                 self.markers_ready = True
                 self.get_logger().info("✅ Markers Spawned!")
             else:
-                # 이미 존재한다는 에러는 무시 (재시작 시 흔함)
                 pass 
         except Exception as e:
             self.get_logger().error(f"❌ Service call failed: {e}")
 
-    # [수정 3] 종료 시 객체 삭제 함수
     def remove_entities(self):
         if not self.del_client.service_is_ready():
-            self.get_logger().warn("⚠️ Delete service not ready.")
             return
 
         self.get_logger().info("🧹 Cleaning up Gazebo markers...")
@@ -131,9 +127,6 @@ class RssiSimulatorTwist(Node):
         for name in ['virtual_pc', 'virtual_camera']:
             req = DeleteEntity.Request()
             req.name = name
-            
-            # 비동기 요청을 보내지만, 프로그램이 종료되기 전에 완료되어야 하므로
-            # spin_until_future_complete를 사용해 잠시 대기합니다.
             future = self.del_client.call_async(req)
             rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
 
@@ -155,44 +148,69 @@ class RssiSimulatorTwist(Node):
         self.robot_x = msg.pose.pose.position.x
         self.robot_y = msg.pose.pose.position.y
 
-    def calculate_rssi(self, tx_x, tx_y, rx_x, rx_y):
+    def calculate_tq(self, tx_x, tx_y, rx_x, rx_y):
+        """
+        [TQ 시뮬레이션 로직]
+        거리 기반으로 TQ(0~255) 값을 생성합니다.
+        - 가까우면 255 유지
+        - 멀어지면 선형적으로 감소
+        """
         distance = math.sqrt((tx_x - rx_x)**2 + (tx_y - rx_y)**2)
-        if distance < 1: distance = 1
-        rssi = self.tx_power - (10 * self.path_loss_exponent * math.log10(distance))
-        noise = random.uniform(-2.0, 2.0)
-        return int(rssi + noise)
+        
+        # 설정값
+        PERFECT_DIST = 3.0   # 3m 이내는 TQ 255 (완벽)
+        MAX_DIST = 12.0      # 12m 이상은 TQ 0 (끊김)
+        
+        if distance <= PERFECT_DIST:
+            base_tq = 255.0
+        elif distance >= MAX_DIST:
+            base_tq = 0.0
+        else:
+            # 3m ~ 12m 사이: 거리 9m 동안 255점이 떨어짐
+            # 점수 = 255 - (초과거리 * 기울기)
+            slope = 255.0 / (MAX_DIST - PERFECT_DIST)
+            base_tq = 255.0 - ((distance - PERFECT_DIST) * slope)
+            
+        # 노이즈 추가 (TQ는 통신 환경에 따라 튀는 경향이 있음)
+        noise = random.randint(-5, 5)
+        final_tq = int(base_tq + noise)
+        
+        # 0 ~ 255 범위 제한 (Clamp)
+        return max(0, min(255, final_tq))
 
-    def update_rssi(self):
+    def update_tq(self):
         if not self.spawn_req_sent:
             self.spawn_markers()
             
         current_cam_x = self.cam_x
         current_cam_y = self.cam_y
 
+        # 가상 마커(카메라) 위치 업데이트
         self.update_marker_pos(current_cam_x, current_cam_y)
 
-        rssi_pc_val = self.calculate_rssi(self.pc_position[0], self.pc_position[1], self.robot_x, self.robot_y)
-        rssi_cam_val = self.calculate_rssi(current_cam_x, current_cam_y, self.robot_x, self.robot_y)
+        # 로봇과 PC, 로봇과 카메라 사이의 TQ 계산
+        tq_pc_val = self.calculate_tq(self.pc_position[0], self.pc_position[1], self.robot_x, self.robot_y)
+        tq_cam_val = self.calculate_tq(current_cam_x, current_cam_y, self.robot_x, self.robot_y)
 
+        # 발행
         msg_pc = Int32()
-        msg_pc.data = rssi_pc_val
-        self.pub_rssi_pc.publish(msg_pc)
+        msg_pc.data = tq_pc_val
+        self.pub_tq_pc.publish(msg_pc)
 
         msg_cam = Int32()
-        msg_cam.data = rssi_cam_val
-        self.pub_rssi_cam.publish(msg_cam)
+        msg_cam.data = tq_cam_val
+        self.pub_tq_cam.publish(msg_cam)
         
-        if not self.markers_ready:
-             self.get_logger().info('Waiting for Gazebo spawn...')
+        # 디버깅 출력 (주석 해제 시 사용)
+        # self.get_logger().info(f"PC TQ: {tq_pc_val} | Cam TQ: {tq_cam_val}")
 
 def main(args=None):
     rclpy.init(args=args)
-    node = RssiSimulatorTwist()
+    node = TqSimulatorTwist()
     
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        # [수정 4] Ctrl+C 감지 시 삭제 수행
         node.get_logger().info("\n🛑 Shutting down...")
         node.remove_entities()
     finally:

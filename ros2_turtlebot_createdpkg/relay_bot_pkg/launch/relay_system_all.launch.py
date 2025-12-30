@@ -21,8 +21,8 @@ def generate_launch_description():
         # 2. RSSI 신호 수집 노드
         Node(
             package='relay_bot_pkg',
-            executable='mesh_rssi_publisher',
-            name='mesh_rssi_publisher',
+            executable='mesh_tq_publisher',
+            name='mesh_tq_publisher',
             output='screen'
         ),
 
