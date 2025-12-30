@@ -17,13 +17,8 @@
    <item>
     <widget class="QTabWidget" name="pTabWidget">
      <property name="currentIndex">
-      <number>0</number>
+      <number>-1</number>
      </property>
-     <widget class="QWidget" name="pTab7">
-      <attribute name="title">
-       <string>Tab7</string>
-      </attribute>
-     </widget>
     </widget>
    </item>
   </layout>

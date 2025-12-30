@@ -544,7 +544,9 @@ moc_mainwidget.cpp: mainwidget.h \
 		../../pi_qt6.8.3/include/QtCore/qlocale.h \
 		../../pi_qt6.8.3/include/QtGui/qguiapplication_platform.h \
 		tab7camviewer.h \
-		../../pi_qt6.8.3/include/QtCore/QDebug \
+		../../pi_qt6.8.3/include/QtCore/QProcess \
+		../../pi_qt6.8.3/include/QtCore/qprocess.h \
+		../../pi_qt6.8.3/include/QtCore/QString \
 		mesh_rx_thread.h \
 		../../pi_qt6.8.3/include/QtCore/QThread \
 		../../pi_qt6.8.3/include/QtGui/QImage \
@@ -743,7 +745,9 @@ moc_tab7camviewer.cpp: tab7camviewer.h \
 		../../pi_qt6.8.3/include/QtGui/qinputmethod.h \
 		../../pi_qt6.8.3/include/QtCore/qlocale.h \
 		../../pi_qt6.8.3/include/QtGui/qguiapplication_platform.h \
-		../../pi_qt6.8.3/include/QtCore/QDebug \
+		../../pi_qt6.8.3/include/QtCore/QProcess \
+		../../pi_qt6.8.3/include/QtCore/qprocess.h \
+		../../pi_qt6.8.3/include/QtCore/QString \
 		mesh_rx_thread.h \
 		../../pi_qt6.8.3/include/QtCore/QThread \
 		../../pi_qt6.8.3/include/QtGui/QImage \
@@ -1103,7 +1107,9 @@ main.o: main.cpp mainwidget.h \
 		../../pi_qt6.8.3/include/QtCore/qlocale.h \
 		../../pi_qt6.8.3/include/QtGui/qguiapplication_platform.h \
 		tab7camviewer.h \
-		../../pi_qt6.8.3/include/QtCore/QDebug \
+		../../pi_qt6.8.3/include/QtCore/QProcess \
+		../../pi_qt6.8.3/include/QtCore/qprocess.h \
+		../../pi_qt6.8.3/include/QtCore/QString \
 		mesh_rx_thread.h \
 		../../pi_qt6.8.3/include/QtCore/QThread \
 		../../pi_qt6.8.3/include/QtGui/QImage \
@@ -1303,12 +1309,19 @@ mainwidget.o: mainwidget.cpp mainwidget.h \
 		../../pi_qt6.8.3/include/QtCore/qlocale.h \
 		../../pi_qt6.8.3/include/QtGui/qguiapplication_platform.h \
 		tab7camviewer.h \
-		../../pi_qt6.8.3/include/QtCore/QDebug \
+		../../pi_qt6.8.3/include/QtCore/QProcess \
+		../../pi_qt6.8.3/include/QtCore/qprocess.h \
+		../../pi_qt6.8.3/include/QtCore/QString \
 		mesh_rx_thread.h \
 		../../pi_qt6.8.3/include/QtCore/QThread \
 		../../pi_qt6.8.3/include/QtGui/QImage \
 		../../pi_qt6.8.3/include/QtCore/QMutex \
 		ui_mainwidget.h \
+		../../pi_qt6.8.3/include/QtCore/QVariant \
+		../../pi_qt6.8.3/include/QtWidgets/QApplication \
+		../../pi_qt6.8.3/include/QtWidgets/qapplication.h \
+		../../pi_qt6.8.3/include/QtWidgets/QTabWidget \
+		../../pi_qt6.8.3/include/QtWidgets/qtabwidget.h \
 		../../pi_qt6.8.3/include/QtWidgets/QVBoxLayout \
 		../../pi_qt6.8.3/include/QtWidgets/qboxlayout.h \
 		../../pi_qt6.8.3/include/QtWidgets/qlayout.h \
@@ -1506,12 +1519,39 @@ tab7camviewer.o: tab7camviewer.cpp tab7camviewer.h \
 		../../pi_qt6.8.3/include/QtGui/qinputmethod.h \
 		../../pi_qt6.8.3/include/QtCore/qlocale.h \
 		../../pi_qt6.8.3/include/QtGui/qguiapplication_platform.h \
-		../../pi_qt6.8.3/include/QtCore/QDebug \
+		../../pi_qt6.8.3/include/QtCore/QProcess \
+		../../pi_qt6.8.3/include/QtCore/qprocess.h \
+		../../pi_qt6.8.3/include/QtCore/QString \
 		mesh_rx_thread.h \
 		../../pi_qt6.8.3/include/QtCore/QThread \
 		../../pi_qt6.8.3/include/QtGui/QImage \
 		../../pi_qt6.8.3/include/QtCore/QMutex \
-		ui_tab7camviewer.h
+		ui_tab7camviewer.h \
+		../../pi_qt6.8.3/include/QtCore/QVariant \
+		../../pi_qt6.8.3/include/QtWidgets/QApplication \
+		../../pi_qt6.8.3/include/QtWidgets/qapplication.h \
+		../../pi_qt6.8.3/include/QtWidgets/QCheckBox \
+		../../pi_qt6.8.3/include/QtWidgets/qcheckbox.h \
+		../../pi_qt6.8.3/include/QtWidgets/qabstractbutton.h \
+		../../pi_qt6.8.3/include/QtWidgets/QHBoxLayout \
+		../../pi_qt6.8.3/include/QtWidgets/qboxlayout.h \
+		../../pi_qt6.8.3/include/QtWidgets/qlayout.h \
+		../../pi_qt6.8.3/include/QtWidgets/qlayoutitem.h \
+		../../pi_qt6.8.3/include/QtWidgets/qgridlayout.h \
+		../../pi_qt6.8.3/include/QtWidgets/QLabel \
+		../../pi_qt6.8.3/include/QtWidgets/qlabel.h \
+		../../pi_qt6.8.3/include/QtWidgets/qframe.h \
+		../../pi_qt6.8.3/include/QtGui/qpicture.h \
+		../../pi_qt6.8.3/include/QtGui/qtextdocument.h \
+		../../pi_qt6.8.3/include/QtWidgets/QPushButton \
+		../../pi_qt6.8.3/include/QtWidgets/qpushbutton.h \
+		../../pi_qt6.8.3/include/QtWidgets/QVBoxLayout \
+		../../pi_qt6.8.3/include/QtGui/QPixmap \
+		../../pi_qt6.8.3/include/QtWidgets/QMessageBox \
+		../../pi_qt6.8.3/include/QtWidgets/qmessagebox.h \
+		../../pi_qt6.8.3/include/QtWidgets/qdialog.h \
+		../../pi_qt6.8.3/include/QtWidgets/qdialogbuttonbox.h \
+		../../pi_qt6.8.3/include/QtCore/QDebug
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o tab7camviewer.o tab7camviewer.cpp
 
 mesh_rx_thread.o: mesh_rx_thread.cpp mesh_rx_thread.h \

@@ -9,7 +9,7 @@ MainWidget::MainWidget(QWidget *parent)
 {
     ui->setupUi(this);
 
-    // Tab7CamViewer를 메인 위젯에 바로 붙이기
+
     pTab7CamViewer = new Tab7CamViewer(this);
 
     auto *lay = new QVBoxLayout(this);
@@ -19,8 +19,6 @@ MainWidget::MainWidget(QWidget *parent)
 
     setLayout(lay);
 
-    // ✅ Tab2SocketClient가 없으니 connect 제거
-    // connect(pTab2SocketClient, SIGNAL(tab7RecvDataSig(QString)), pTab7CamViewer, SLOT(tab7RecvDataSlot(QString)));
 }
 
 MainWidget::~MainWidget()
