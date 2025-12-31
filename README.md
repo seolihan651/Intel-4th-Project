@@ -17,7 +17,7 @@ ROS2 기반의 TurtleBot 제어 및 Qt GUI, 그리고 별도의 통신 모듈을
 
 |                                          윤찬민                                         |                                      정찬영                                      |
 | :-------------------------------------------------------------------------------------: | :------------------------------------------------------------------------------: |
-|   <img width="100px" src="https://avatars.githubusercontent.com/u/221326759?v=4" />   |   <img width="100px" src="https://avatars.githubusercontent.com/u/228877806?v=4"/>   |
+|   <img width="100px" src="https://avatars.githubusercontent.com/u/208969937?v=4" />   |   <img width="100px" src="https://avatars.githubusercontent.com/u/228877806?v=4"/>   |
 |              [@CMYMC](https://github.com/CMYMC)                                 |           [@salnock](https://github.com/salnock)           |
 |         멀티캐스트 통신,<br />시스템 자동화          |            AGL 빌드            |
 
