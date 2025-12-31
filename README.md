@@ -7,6 +7,22 @@
 인텔 에지 AI SW 아카데미 8기, 4번째 팀 프로젝트 저장소입니다.  
 ROS2 기반의 TurtleBot 제어 및 Qt GUI, 그리고 별도의 통신 모듈을 포함하고 있습니다.
 
+## 🤝 개발팀 소개
+
+|                                      김성준                                        |                                      오정선                                       |                                      김영교                                      |
+| :-------------------------------------------------------------------------------: | :-------------------------------------------------------------------------------: | :------------------------------------------------------------------------------: |
+| <img  width="100px" src="https://avatars.githubusercontent.com/u/147055391?v=4" /> | <img width="100px" src="https://avatars.githubusercontent.com/u/128763594?s=400&v=4" /> | <img width="100px" src="https://avatars.githubusercontent.com/u/233918499?v=4"/> |
+|                    [@seolihan651jw](https://github.com/seolihan651)                     |                      [@gosumjigi](https://github.com/gosumjigi)                       |                      [@mmc47047](https://github.com/mmc47047)                     |
+|                          [팀장]<br />프로젝트 총괄, ROS 구현,<br />데이터셋 제작, 형상 관리                          |                          [부팀장]<br />AI 모델링, ROS 구현,<br />웹 화면 구현                          |                                STM32 보드 차량<br />제작 및 배선,CAN 통신                                |
+
+
+|                                          윤찬민                                         |                                      정찬영                                      |
+| :-------------------------------------------------------------------------------------: | :------------------------------------------------------------------------------: |
+|   <img width="100px" src="https://avatars.githubusercontent.com/u/221326759?v=4" />   |   <img width="100px" src="https://avatars.githubusercontent.com/u/228847706?v=4"/>   |
+|              [@rudals6385-prog](https://github.com/rudals6385-prog)                                 |           [@Heo157](https://github.com/Heo157)           |
+|         멀티캐스트 통신,<br />시스템 자동화          |            AGL 빌드            |
+
+
 ## 📂 디렉토리 구조 (Directory Structure)
 
 ```text
