@@ -12,14 +12,14 @@ ROS2 기반의 TurtleBot 제어 및 Qt GUI, 그리고 별도의 통신 모듈을
 | :-------------------------------------------------------------------------------: |  :------------------------------------------------------------------------------: |
 | <img  width="100px" src="https://avatars.githubusercontent.com/u/147055391?v=4" /> |  <img width="100px" src="https://avatars.githubusercontent.com/u/221326759?v=4"/> |
 |                    [@seolihan651jw](https://github.com/seolihan651)                     |                      [@mmc47047](https://github.com/mmc47047)                     |
-|                          [팀장]<br />프로젝트 총괄, ROS 구현,<br />데이터셋 제작, 형상 관리                          |                                STM32 보드 차량<br />제작 및 배선,CAN 통신                                |
+|                          [팀장]<br />프로젝트 총괄, ROS 구현,<br />                          |                                BATMAN-ADV Mesh 구현                                |
 
 
 |                                      윤찬민                                        |                                      정찬영                                      |
 | :-------------------------------------------------------------------------------: |  :------------------------------------------------------------------------------: |
 |   <img width="100px" src="https://avatars.githubusercontent.com/u/208969937?v=4" />   |   <img width="100px" src="https://avatars.githubusercontent.com/u/228877806?v=4"/>   |
 |                    [@CMYMC](https://github.com/CMYMC)                     |                      [@salnock](https://github.com/salnock)                     |
-|         멀티캐스트 통신,<br />시스템 자동화          |            AGL 빌드            |
+|         BATMAN-ADV Mesh 구현, QT 제작          |            ROS 구현            |
 
 
 ## 📂 디렉토리 구조 (Directory Structure)
