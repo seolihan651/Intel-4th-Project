@@ -20,6 +20,10 @@ Tab7CamViewer::Tab7CamViewer(QWidget *parent)
     // 초기 UI
     //ui->pPBsnapShot->setEnabled(false);
 
+    ui->pRightPanel->setStyleSheet(R"(pRightPanel {
+    background-color: #2C3E50; /* 어두운 배경 */
+    color: white;
+})");
 
     // RX Thread
     pMeshRxThread = new MeshRxThread(this);
@@ -31,7 +35,8 @@ Tab7CamViewer::Tab7CamViewer(QWidget *parent)
                 ui->plabelCamView->setPixmap(
                     QPixmap::fromImage(img).scaled(
                         ui->plabelCamView->size(),
-                        Qt::KeepAspectRatio,
+                        //Qt::KeepAspectRatio,
+                        Qt::IgnoreAspectRatio,
                         Qt::FastTransformation
                     )
                 );
@@ -45,10 +50,6 @@ Tab7CamViewer::Tab7CamViewer(QWidget *parent)
             Qt::QueuedConnection);
 
     connect(pMeshRxThread, &MeshRxThread::linkUpdated, this, &Tab7CamViewer::onLinkUpdated,Qt::QueuedConnection);
-    connect(pMeshRxThread, &MeshRxThread::deviceInfoUpdated, this,
-            [this](const QString &text){
-                ui->QlabeDeviceInfo->setText(text);   // ✅ 지금 ui는 QLabel
-            }, Qt::QueuedConnection);
 
     //Toggle Cam 설정
     ui->pPBtoggleCam->setText("");
@@ -68,6 +69,36 @@ Tab7CamViewer::Tab7CamViewer(QWidget *parent)
     )");
     ui->QlabelWIFIStatusIcon->setPixmap(QPixmap(":/Images/WIFI_OFF.png"));
 
+    // ui->frame->setStyleSheet(R"(
+    // frame {
+    // border: 1px solid #444;
+    //     border-radius: 5px;
+    //     background-color: rgba(255, 255, 255, 0.05);
+    // margin: 5px;
+    // padding: 10px;
+    // }
+    // )");
+
+    // 시간 라벨 설정
+    ui->QlabelClock->setStyleSheet("color: #000000; font-weight: bold; font-size: 14px;"); //
+
+    // 게이지바  시트 설정
+    ui->pTQValuebar->setTextVisible(true);
+    ui->pTQValuebar->setStyleSheet(R"(
+    QProgressBar {
+        border: 1px solid grey;
+        border-radius: 5px;
+        text-align: center;
+        background-color: #EEEEEE;
+        color: black; /* 글자색을 검정으로 변경하여 가독성 확보 */
+        font-weight: bold;
+    }
+    QProgressBar::chunk {
+        background-color: #2ECC71; /* 게이지 색상 */
+    }
+)");
+
+
 
     // mesh on/off runner
     meshProc = new QProcess(this);
@@ -76,7 +107,7 @@ Tab7CamViewer::Tab7CamViewer(QWidget *parent)
 
 
 
-
+    //startDeviceInfoTimer();
     resetLinkUi();
 }
 
@@ -140,7 +171,8 @@ void Tab7CamViewer::onMeshProcFinished(int exitCode, QProcess::ExitStatus status
     if (meshAction == MeshAction::On) {
         // mesh 올라왔으니 수신 시작
         startReceiver();
-        //setUiRunning(true);
+        startDeviceInfoTimer();
+
     } else if (meshAction == MeshAction::Off) {
         // mesh 내렸으니 UI 완전 초기화
         //setUiRunning(false);
@@ -206,16 +238,17 @@ void Tab7CamViewer::on_pPBtoggleCam_clicked(bool checked)
     }
 
     if (checked) {
-        // 1) mesh_on 실행 → 2) 성공 시 receiver 시작
-        //setUiBusy("MeshOn...");
+
         runMeshOn();
     } else {
-        // 1) receiver 정지 → 2) mesh_off 실행 → 3) UI 원복
-        //setUiBusy("Stopping...");
+        stopDeviceInfoTimer();
+        m_macs.clear();
+        ui->pDeviceList->clear();
+        ui->QlabeDeviceInfo->setText("DEVICE INFO (0 Devices)");
         resetLinkUi();
         stopReceiver();
 
-        //setUiBusy("MeshOff...");
+
         runMeshOff();
 
     }
@@ -278,6 +311,9 @@ void Tab7CamViewer::stopDeviceInfoTimer()
 // 2) 1초마다 호출되는 엔트리
 void Tab7CamViewer::updateDeviceInfo()
 {
+    QString currentTime = QDateTime::currentDateTime().toString("hh:mm:ss");
+    ui->QlabelClock->setText(currentTime);
+
     // 프로세스 겹침 방지
     if (m_batProc && m_batProc->state() != QProcess::NotRunning) return;
     if (m_neighProc && m_neighProc->state() != QProcess::NotRunning) return;
@@ -295,23 +331,33 @@ void Tab7CamViewer::runBatctlO()
                     const QString out = QString::fromUtf8(m_batProc->readAllStandardOutput());
                     m_macs.clear();
 
-                    // 예: "* 2c:cf:67:8c:2a:7b  2.780s  ( 93) ..."
-                    QRegularExpression re(R"(^\s*[* ]\s*([0-9a-fA-F:]{17})\b)");
-                    for (const QString &line : out.split('\n')) {
-                        auto m = re.match(line);
-                        if (m.hasMatch()) {
-                            QString mac = m.captured(1).toLower();
-                            if (!m_macs.contains(mac))
+                    // [중요] 1. 내 장치(HOST/pi19)는 batctl n에 안 뜨므로 강제로 추가!
+                    // (리스트 맨 위에 고정됩니다)
+                    m_macs.append("2c:cf:67:8c:2a:13");
+
+                    // 2. 이웃 장치 파싱 (batctl n)
+                    QRegularExpression re(R"(\S+\s+([0-9a-fA-F:]{17})\s+([0-9.]+)s)");
+                    QRegularExpressionMatchIterator it = re.globalMatch(out);
+
+                    while (it.hasNext()) {
+                        QRegularExpressionMatch match = it.next();
+                        QString mac = match.captured(1).toLower();
+                        QString timeStr = match.captured(2);
+
+                        bool ok;
+                        double seenSec = timeStr.toDouble(&ok);
+
+                        // 60초 이내인 이웃만 추가
+                        if (ok && seenSec <= 60.0) {
+                            if (!m_macs.contains(mac)) {
                                 m_macs << mac;
+                            }
                         }
                     }
-
                     runIpNeigh();
                 });
     }
-
-    // 권한 문제 있으면 batctl이 비어올 수 있어 (setcap / sudo 필요)
-    m_batProc->start("batctl", QStringList() << "o");
+    m_batProc->start("batctl", QStringList() << "n");
 }
 
 // 4) ip neigh 실행 & 파싱 (IP가 없으면 Unknown 유지)
@@ -341,20 +387,54 @@ void Tab7CamViewer::runIpNeigh()
     m_neighProc->start("ip", QStringList() << "neigh" << "show" << "dev" << "bat0");
 }
 
-// 5) 화면 출력
 void Tab7CamViewer::renderDeviceInfo()
 {
-    QString text;
-    text += QString("DEVICE INFO (%1 Devices)\n\n").arg(m_macs.size());
+    ui->pDeviceList->clear();
+
+    // 상단 라벨 업데이트
+    ui->QlabeDeviceInfo->setText(QString("DEVICE INFO (%1 Devices)").arg(m_macs.size()));
 
     int idx = 1;
     for (const QString &mac : m_macs) {
-        const QString ip = m_macToIp.value(mac, "Unknown");
-        text += QString("Device %1  MAC %2\n").arg(idx++).arg(mac);
-        text += QString("         IP  %1\n\n").arg(ip);
+
+        QString roleName;
+        QString ipAddr;
+        QString displayMac = mac.toUpper();
+
+        //  MAC 주소에 따라 역할(Role)과 IP를 수동으로 지정
+        if (mac == "2c:cf:67:8c:2a:13") {
+            roleName = "HOST";  // 수신
+            ipAddr   = "10.50.0.10";   //
+        }
+        else if (mac == "2c:cf:67:8c:2a:7b") {
+            roleName = "CAM";   // 송신
+            ipAddr   = "10.50.0.11";
+        }
+        else if (mac == "d8:3a:dd:5a:d8:f8") {
+            roleName = "BOT";   // 중계
+            ipAddr   = "10.50.0.12";
+        }
+        else {
+            // 표에 없는 새로운 장치가 붙었을 경우
+            roleName = QString("Guest Device %1").arg(idx);
+            // ip neigh에서 IP 찾기 (없으면 Unknown)
+            ipAddr   = m_macToIp.value(mac, "Unknown");
+        }
+
+        // 리스트에 보여줄 텍스트 구성
+        // 예: HOST (pi19)
+        //     MAC: 2C:CF...
+        //     IP : 10.50.0.10
+        QString itemText = QString("%1\nIP: %2\nMAC: %3\n")
+                                .arg(roleName)
+                                .arg(ipAddr)
+                                .arg(displayMac);
+
+        // 리스트 아이템 생성 및 추가
+        QListWidgetItem *item = new QListWidgetItem(itemText, ui->pDeviceList);
+        item->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        ui->pDeviceList->addItem(item);
+
+        idx++;
     }
-
-    // ui에 QPlainTextEdit 하나 만들어서 objectName 예: pDeviceInfoText
-    ui->pDeviceInfoText->setPlainText(text);
-
 }

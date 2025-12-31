@@ -222,30 +222,30 @@ static std::vector<NeighborSeen> getNeighborsWithSeen()
 
 
 // ---- minimal overlay (top-left only) ----
-static void drawLabelTopLeft(cv::Mat& img, const string& l1, const string& l2) {
-    double fontScale = 0.8;
-    int thickness = 2;
-    int baseline = 0;
+// static void drawLabelTopLeft(cv::Mat& img, const string& l1, const string& l2) {
+//     double fontScale = 0.8;
+//     int thickness = 2;
+//     int baseline = 0;
 
-    cv::Size t1 = cv::getTextSize(l1, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
-    cv::Size t2 = cv::getTextSize(l2, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
+//     cv::Size t1 = cv::getTextSize(l1, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
+//     cv::Size t2 = cv::getTextSize(l2, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
 
-    int margin = 10;
-    int pad = 6;
-    int lineGap = 6;
+//     int margin = 10;
+//     int pad = 6;
+//     int lineGap = 6;
 
-    int w = max(t1.width, t2.width) + pad * 2;
-    int h = (t1.height + t2.height) + pad * 2 + lineGap;
+//     int w = max(t1.width, t2.width) + pad * 2;
+//     int h = (t1.height + t2.height) + pad * 2 + lineGap;
 
-    cv::Rect box(margin, margin, min(w, img.cols - margin - 1), min(h, img.rows - margin - 1));
-    cv::rectangle(img, box, cv::Scalar(0, 0, 0), cv::FILLED);
+//     cv::Rect box(margin, margin, min(w, img.cols - margin - 1), min(h, img.rows - margin - 1));
+//     cv::rectangle(img, box, cv::Scalar(0, 0, 0), cv::FILLED);
 
-    cv::Point p1(margin + pad, margin + pad + t1.height);
-    cv::Point p2(margin + pad, margin + pad + t1.height + lineGap + t2.height);
+//     cv::Point p1(margin + pad, margin + pad + t1.height);
+//     cv::Point p2(margin + pad, margin + pad + t1.height + lineGap + t2.height);
 
-    cv::putText(img, l1, p1, cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(0, 255, 0), thickness);
-    cv::putText(img, l2, p2, cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(0, 255, 0), thickness);
-}
+//     cv::putText(img, l1, p1, cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(0, 255, 0), thickness);
+//     cv::putText(img, l2, p2, cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(0, 255, 0), thickness);
+// }
 
 // ----------------- chunk reassembly -----------------
 struct FrameBuf {
@@ -369,127 +369,58 @@ void MeshRxThread::run()
     };
 
     auto updateLinkStatus = [&]() {
-        //if (!linkPollEnabled.load()) {
-            line1 = "HOP RSSI: N/A";
-            line2 = "TQ: N/A";
+        line1 = "HOP RSSI: N/A";
+        line2 = "TQ: N/A";
 
-            // TQ 값 probar에 전달하기 위해 추가
-            int tqNow =(route.ok ? route.tq : -1);
+        // 초기화: 일단 -1 (끊김 상태)
+        int tqNow = -1;
 
-            if(tqNow !=lastTq.load())
-            {
-                lastTq=tqNow;
-                emit linkUpdated(tqNow);
-            }
-
-    auto lastLinkUpdate = chrono::steady_clock::now() - chrono::seconds(10);
-    auto lastEmit = chrono::steady_clock::now() - chrono::milliseconds(100);
-
-          //  return;
-        //}
-
-        // receiver_fixed_tuned 로직 그대로 반영
         hopMac.clear();
         route = BatRoute{};
 
-        // 1) originatorMac 있으면 batctl o로 nexthop/TQ 확보
+        // 1. [정석] 지정된 카메라(Originator)로 가는 경로(TQ)가 있는지 확인
         if (!originatorMac.empty() && isMac(originatorMac)) {
             route = getBatRouteToOriginator(originatorMac);
             if (route.ok) {
                 hopMac = route.nexthop;
                 string relay = (route.nexthop == route.originator) ? "direct"
                                                                    : ("via " + route.nexthop.substr(0, 8) + "..");
-                if (route.tq >= 0) line2 = "TQ: " + to_string(route.tq) + "/255 (" + relay + ")";
-                else line2 = "TQ: N/A (" + relay + ")";
+
+                // 정식 TQ 값이 있으면 사용
+                if (route.tq >= 0) {
+                    tqNow = route.tq;
+                    line2 = "TQ: " + to_string(route.tq) + "/255 (" + relay + ")";
+                } else {
+                    line2 = "TQ: N/A (" + relay + ")";
+                }
             } else {
                 line2 = "TQ: N/A (route?)";
             }
         }
 
-        // 2) route 없으면 batctl n / iw dump로 1-hop 이웃 하나 선택
-        if (hopMac.empty()) {
+        // 2. [비상대책] 정식 경로는 없지만, 내 옆에 이웃(Neighbor)은 있는 경우
+        // 이 로직이 있어야 20초 대기 없이 WiFi 아이콘이 바로 뜹니다.
+        if (tqNow == -1) {
             hopMac = getBestNeighborMac();
-            if (hopMac.empty()) hopMac = getFirstStationMac(phyIface);
-            if (!hopMac.empty()) line2 = "TQ: N/A (hop " + hopMac.substr(0, 8) + "..)";
-            else line2 = "TQ: N/A";
-        }
-
-        // 3) RSSI는 hopMac 기준
-        bool ok = (!hopMac.empty()) && getRssiDbmFromStation(phyIface, hopMac, hopRssiDbm);
-        if (ok) line1 = "HOP RSSI: " + to_string(hopRssiDbm) + " dBm";
-        else    line1 = "HOP RSSI: N/A";
-    };
-
-    auto updateDeviceInfo = [&]() {
-        // 1) batctl o 에서 MAC 목록 뽑기
-        vector<string> macs;
-        {
-            string out = runCmd("batctl o 2>/dev/null");
-            istringstream iss(out);
-            string line;
-            while (getline(iss, line)) {
-                string s = trim(line);
-                if (s.empty()) continue;
-
-                // 토큰화해서 첫 MAC 찾기 (형태: "* 2c:cf:...  2.7s (93) ...")
-                istringstream ls(s);
-                string tok;
-                while (ls >> tok) {
-                    if (isMac(tok)) {
-                        // 중복 방지
-                        bool dup = false;
-                        for (auto &m : macs) { if (m == tok) { dup = true; break; } }
-                        if (!dup) macs.push_back(tok);
-                        break;
-                    }
-                }
+            // 이웃이 보이면 TQ를 0으로 강제 설정 -> UI에서 'Connect'로 인식
+            if (!hopMac.empty()) {
+                tqNow = 0;
+                line2 = "TQ: Wait.. (hop " + hopMac.substr(0, 8) + "..)";
             }
         }
 
+        // 3. RSSI 정보 갱신
+        if (!hopMac.empty()) {
+            if (getRssiDbmFromStation(phyIface, hopMac, hopRssiDbm))
+                line1 = "HOP RSSI: " + to_string(hopRssiDbm) + " dBm";
+        }
 
-        auto neigh = getNeighborsWithSeen();
-
-        neigh.erase(std::remove_if(neigh.begin(), neigh.end(),
-                                   [](const NeighborSeen& n){ return n.seenSec > 60.0; }),
-                    neigh.end());
-
-        //auto mac2ip = getMacToIpBat0();
-
-        // 2) ip neigh show dev bat0 에서 MAC->IP 맵 만들기
-        unordered_map<string,string> mac2ip;
+        // 4. 값이 변했을 때만 시그널 전송 (UI 업데이트)
+        if(tqNow != lastTq.load())
         {
-            string out = runCmd("ip neigh show dev bat0 2>/dev/null");
-            istringstream iss(out);
-            string line;
-            while (getline(iss, line)) {
-                // 예: 10.10.14.79 dev bat0 lladdr 00:14:1b:... REACHABLE
-                istringstream ls(line);
-                string ip, dev, ifname, lladdr, mac;
-                ls >> ip >> dev >> ifname >> lladdr >> mac;
-                if (ip.empty() || mac.empty()) continue;
-                if (ifname != "bat0") continue;
-                if (lladdr != "lladdr") continue;
-                if (!isMac(mac)) continue;
-                mac2ip[mac] = ip;
-            }
+            lastTq = tqNow;
+            emit linkUpdated(tqNow);
         }
-
-        // 3) 문자열 구성 (Unknown 허용)
-        QString text;
-        text += QString("DEVICE INFO (%1 Devices)\n\n").arg((int)macs.size());
-
-        int idx = 1;
-        for (auto &mac : macs) {
-            QString qmac = QString::fromStdString(mac);
-            QString ip = "Unknown";
-            auto it = mac2ip.find(mac);
-            if (it != mac2ip.end()) ip = QString::fromStdString(it->second);
-
-            text += QString("Device %1  MAC %2\n").arg(idx++).arg(qmac);
-            text += QString("         IP  %1\n\n").arg(ip);
-        }
-
-        emit deviceInfoUpdated(text);
     };
 
     auto lastLinkUpdate = chrono::steady_clock::now() - chrono::seconds(10);
@@ -507,7 +438,7 @@ void MeshRxThread::run()
             lastLinkUpdate = now;
         }
         if (chrono::duration_cast<chrono::milliseconds>(now - lastDevUpdate).count() >= 1000) {
-            updateDeviceInfo();
+            //updateDeviceInfo();
             lastDevUpdate = now;
         }
 
@@ -528,7 +459,7 @@ void MeshRxThread::run()
                 lastFrameBgr = bgr.clone();
             }
 
-            drawLabelTopLeft(bgr, line1, line2);
+            //drawLabelTopLeft(bgr, line1, line2);
 
             // emit fps 제한(25fps)
             auto tnow = chrono::steady_clock::now();

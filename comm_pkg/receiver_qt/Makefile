@@ -1576,19 +1576,24 @@ tab7camviewer.o: tab7camviewer.cpp tab7camviewer.h \
 		../../pi_qt6.8.3/include/QtWidgets/qlabel.h \
 		../../pi_qt6.8.3/include/QtGui/qpicture.h \
 		../../pi_qt6.8.3/include/QtGui/qtextdocument.h \
-		../../pi_qt6.8.3/include/QtWidgets/QPlainTextEdit \
-		../../pi_qt6.8.3/include/QtWidgets/qplaintextedit.h \
-		../../pi_qt6.8.3/include/QtWidgets/qtextedit.h \
+		../../pi_qt6.8.3/include/QtWidgets/QListWidget \
+		../../pi_qt6.8.3/include/QtWidgets/qlistwidget.h \
+		../../pi_qt6.8.3/include/QtWidgets/qlistview.h \
+		../../pi_qt6.8.3/include/QtWidgets/qabstractitemview.h \
 		../../pi_qt6.8.3/include/QtWidgets/qabstractscrollarea.h \
-		../../pi_qt6.8.3/include/QtGui/qtextoption.h \
-		../../pi_qt6.8.3/include/QtGui/qtextcursor.h \
-		../../pi_qt6.8.3/include/QtGui/qtextformat.h \
-		../../pi_qt6.8.3/include/QtGui/qpen.h \
-		../../pi_qt6.8.3/include/QtGui/qabstracttextdocumentlayout.h \
-		../../pi_qt6.8.3/include/QtGui/qtextlayout.h \
-		../../pi_qt6.8.3/include/QtGui/qglyphrun.h \
-		../../pi_qt6.8.3/include/QtGui/qrawfont.h \
-		../../pi_qt6.8.3/include/QtGui/qfontdatabase.h \
+		../../pi_qt6.8.3/include/QtCore/qabstractitemmodel.h \
+		../../pi_qt6.8.3/include/QtCore/qitemselectionmodel.h \
+		../../pi_qt6.8.3/include/QtWidgets/qabstractitemdelegate.h \
+		../../pi_qt6.8.3/include/QtWidgets/qstyleoption.h \
+		../../pi_qt6.8.3/include/QtWidgets/qabstractspinbox.h \
+		../../pi_qt6.8.3/include/QtGui/qvalidator.h \
+		../../pi_qt6.8.3/include/QtCore/qregularexpression.h \
+		../../pi_qt6.8.3/include/QtWidgets/qslider.h \
+		../../pi_qt6.8.3/include/QtWidgets/qabstractslider.h \
+		../../pi_qt6.8.3/include/QtWidgets/qstyle.h \
+		../../pi_qt6.8.3/include/QtWidgets/qtabbar.h \
+		../../pi_qt6.8.3/include/QtWidgets/qtabwidget.h \
+		../../pi_qt6.8.3/include/QtWidgets/qrubberband.h \
 		../../pi_qt6.8.3/include/QtWidgets/QProgressBar \
 		../../pi_qt6.8.3/include/QtWidgets/qprogressbar.h \
 		../../pi_qt6.8.3/include/QtWidgets/QPushButton \
@@ -1602,7 +1607,6 @@ tab7camviewer.o: tab7camviewer.cpp tab7camviewer.h \
 		../../pi_qt6.8.3/include/QtWidgets/qdialogbuttonbox.h \
 		../../pi_qt6.8.3/include/QtCore/QDebug \
 		../../pi_qt6.8.3/include/QtCore/QRegularExpression \
-		../../pi_qt6.8.3/include/QtCore/qregularexpression.h \
 		../../pi_qt6.8.3/include/QtCore/QDateTime \
 		../../pi_qt6.8.3/include/QtCore/qdatetime.h \
 		../../pi_qt6.8.3/include/QtCore/qcalendar.h
