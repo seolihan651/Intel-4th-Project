@@ -356,6 +356,7 @@ compiler_rcc_clean:
 qrc_Images.cpp: Images.qrc \
 		../../pi_qt6.8.3/libexec/rcc \
 		Images/WIFI_ON.png \
+		Images/bat.png \
 		Images/WIFI_OFF.png
 	/home/pi/pi_qt6.8.3/libexec/rcc -name Images Images.qrc -o qrc_Images.cpp
 

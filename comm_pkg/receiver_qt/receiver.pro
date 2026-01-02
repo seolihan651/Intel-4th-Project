@@ -21,3 +21,5 @@ LIBS += `pkg-config opencv4 --cflags --libs`
 
 RESOURCES += \
     Images.qrc
+
+DISTFILES +=

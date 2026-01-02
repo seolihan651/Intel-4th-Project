@@ -114,6 +114,52 @@ struct BatRoute {
 };
 
 // batctl o에서 특정 originator 경로 파싱
+// static BatRoute getBatRouteToOriginator(const string& originatorMac) {
+//     BatRoute r;
+//     r.originator = originatorMac;
+//     if (!isMac(originatorMac)) return r;
+
+//     string out = runCmd("batctl o 2>/dev/null");
+//     if (out.empty()) return r;
+
+//     istringstream iss(out);
+//     string line;
+//     while (getline(iss, line)) {
+//         if (line.find(originatorMac) == string::npos) continue;
+
+//         string s = trim(line);
+//         if (s.empty()) continue;
+
+//         istringstream ls(s);
+//         vector<string> tok;
+//         string t;
+//         while (ls >> t) tok.push_back(t);
+//         if (tok.size() < 4) continue;
+
+//         size_t idx = 0;
+//         if (tok[0] == "*") idx = 1;
+//         if (idx + 3 >= tok.size()) continue;
+
+//         string org = tok[idx];
+//         string tqTok = tok[idx + 2];
+//         string next = tok[idx + 3];
+
+//         if (!isMac(org) || !isMac(next)) continue;
+//         if (org != originatorMac) continue;
+
+//         if (tqTok.size() >= 3 && tqTok.front() == '(' && tqTok.back() == ')') {
+//             try { r.tq = stoi(tqTok.substr(1, tqTok.size() - 2)); } catch (...) {}
+//         }
+
+//         r.ok = true;
+//         r.nexthop = next;
+//         return r;
+//     }
+//     return r;
+// }
+
+// mesh_rx_thread.cpp 내부
+
 static BatRoute getBatRouteToOriginator(const string& originatorMac) {
     BatRoute r;
     r.originator = originatorMac;
@@ -124,37 +170,68 @@ static BatRoute getBatRouteToOriginator(const string& originatorMac) {
 
     istringstream iss(out);
     string line;
+
+    int maxTq = -1;
+    string maxNexthop;
+    bool foundAny = false;
+
     while (getline(iss, line)) {
+        // 라인에 송신캠 MAC이 없으면 패스
         if (line.find(originatorMac) == string::npos) continue;
 
+        // 1. 선택된 경로(*)인지 확인
         string s = trim(line);
-        if (s.empty()) continue;
+        bool isSelected = (s.size() > 0 && s[0] == '*');
 
-        istringstream ls(s);
-        vector<string> tok;
-        string t;
-        while (ls >> t) tok.push_back(t);
-        if (tok.size() < 4) continue;
+        // [핵심 수정] 2. TQ 값 파싱: 공백으로 자르지 않고 '괄호 위치'로 찾음
+        // 예: "... (255) ..." 또는 "... ( 90) ..."
+        size_t posOpen = line.find('(');
+        size_t posClose = line.find(')');
 
-        size_t idx = 0;
-        if (tok[0] == "*") idx = 1;
-        if (idx + 3 >= tok.size()) continue;
+        // 괄호가 없거나 이상하면 패스
+        if (posOpen == string::npos || posClose == string::npos || posClose <= posOpen) continue;
 
-        string org = tok[idx];
-        string tqTok = tok[idx + 2];
-        string next = tok[idx + 3];
+        // 괄호 사이의 문자열 추출 (예: "255" 또는 " 90")
+        string tqStr = line.substr(posOpen + 1, posClose - posOpen - 1);
 
-        if (!isMac(org) || !isMac(next)) continue;
-        if (org != originatorMac) continue;
-
-        if (tqTok.size() >= 3 && tqTok.front() == '(' && tqTok.back() == ')') {
-            try { r.tq = stoi(tqTok.substr(1, tqTok.size() - 2)); } catch (...) {}
+        int currentTq = 0;
+        try {
+            currentTq = stoi(tqStr); // stoi 함수는 앞쪽 공백(" 90")을 알아서 무시하고 숫자로 변환해줌!
+        } catch (...) {
+            continue;
         }
 
-        r.ok = true;
-        r.nexthop = next;
-        return r;
+        // 3. NextHop 파싱: 닫는 괄호 ')' 뒤에 나오는 첫 번째 단어
+        string afterTq = line.substr(posClose + 1);
+        istringstream ssNext(afterTq);
+        string nextHop;
+        ssNext >> nextHop; // 공백 건너뛰고 바로 나오는 MAC 주소
+
+        if (!isMac(nextHop)) continue;
+
+        // --- 경로 선택 및 저장 ---
+        if (isSelected) {
+            r.ok = true;
+            r.nexthop = nextHop;
+            r.tq = currentTq;
+            return r; // 최적 경로(*) 발견 시 즉시 반환
+        }
+
+        // 혹시 *가 안 보일 경우를 대비해 가장 높은 TQ값 저장
+        if (currentTq > maxTq) {
+            maxTq = currentTq;
+            maxNexthop = nextHop;
+            foundAny = true;
+        }
     }
+
+    // * 붙은 경로가 없을 때, 차선책으로 TQ가 가장 높은 경로 사용
+    if (!r.ok && foundAny) {
+        r.ok = true;
+        r.nexthop = maxNexthop;
+        r.tq = maxTq;
+    }
+
     return r;
 }
 

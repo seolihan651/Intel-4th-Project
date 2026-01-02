@@ -52,62 +52,17 @@ Tab7CamViewer::Tab7CamViewer(QWidget *parent)
     connect(pMeshRxThread, &MeshRxThread::linkUpdated, this, &Tab7CamViewer::onLinkUpdated,Qt::QueuedConnection);
 
     //Toggle Cam 설정
-    ui->pPBtoggleCam->setText("");
     ui->pPBtoggleCam->setCheckable(true);
-    ui->pPBtoggleCam->setText("");
-    ui->pPBtoggleCam->setFixedSize(56, 30);
-    ui->pPBtoggleCam->setStyleSheet(R"(
-    QPushButton {
-    border: 1px solid #444;
-    border-radius: 15px;
-    background: #666;
-    }
-    QPushButton:checked {
-    background: #2196F3;
-    border: 1px solid #1f9f54;
-    }S
-    )");
+    //ui->pPBtoggleCam->setFixedSize(56, 30);
     ui->QlabelWIFIStatusIcon->setPixmap(QPixmap(":/Images/WIFI_OFF.png"));
 
-    // ui->frame->setStyleSheet(R"(
-    // frame {
-    // border: 1px solid #444;
-    //     border-radius: 5px;
-    //     background-color: rgba(255, 255, 255, 0.05);
-    // margin: 5px;
-    // padding: 10px;
-    // }
-    // )");
-
-    // 시간 라벨 설정
-    ui->QlabelClock->setStyleSheet("color: #000000; font-weight: bold; font-size: 14px;"); //
-
-    // 게이지바  시트 설정
+    // 게이지바  설정
     ui->pTQValuebar->setTextVisible(true);
-    ui->pTQValuebar->setStyleSheet(R"(
-    QProgressBar {
-        border: 1px solid grey;
-        border-radius: 5px;
-        text-align: center;
-        background-color: #EEEEEE;
-        color: black; /* 글자색을 검정으로 변경하여 가독성 확보 */
-        font-weight: bold;
-    }
-    QProgressBar::chunk {
-        background-color: #2ECC71; /* 게이지 색상 */
-    }
-)");
-
-
 
     // mesh on/off runner
     meshProc = new QProcess(this);
     connect(meshProc, &QProcess::finished, this, &Tab7CamViewer::onMeshProcFinished);
     connect(meshProc, &QProcess::errorOccurred, this, &Tab7CamViewer::onMeshProcError);
-
-
-
-    //startDeviceInfoTimer();
     resetLinkUi();
 }
 
@@ -198,7 +153,6 @@ void Tab7CamViewer::startReceiver()
     if (!pMeshRxThread) return;
     if (pMeshRxThread->isRunning()) return;
 
-    // 너 환경에 맞게 설정(필요 없으면 MeshRxThread 기본값 써도 됨)
     // 송신 Pi wlan0 MAC을 넣으면 TQ 라우팅이 더 정확해짐
     pMeshRxThread->phyIface = "wlan0";
     pMeshRxThread->originatorMac = "2c:cf:67:8c:2a:7b"; // TODO: 송신Pi MAC으로 변경
@@ -247,8 +201,6 @@ void Tab7CamViewer::on_pPBtoggleCam_clicked(bool checked)
         ui->QlabeDeviceInfo->setText("DEVICE INFO (0 Devices)");
         resetLinkUi();
         stopReceiver();
-
-
         runMeshOff();
 
     }
@@ -261,8 +213,7 @@ void Tab7CamViewer::setWifiIcon(bool connected)
     else ui->QlabelWiFiStatus->setText("Uncnnect");
 
     QPixmap pm(path);
-    ui->QlabelWIFIStatusIcon->setPixmap(pm.scaled(ui->QlabelWIFIStatusIcon->size(),Qt::KeepAspectRatio,Qt::SmoothTransformation));
-
+    ui->QlabelWIFIStatusIcon->setPixmap(pm.scaled(QSize(40,40),Qt::KeepAspectRatio,Qt::SmoothTransformation));
 }
 
 
@@ -331,8 +282,7 @@ void Tab7CamViewer::runBatctlO()
                     const QString out = QString::fromUtf8(m_batProc->readAllStandardOutput());
                     m_macs.clear();
 
-                    // [중요] 1. 내 장치(HOST/pi19)는 batctl n에 안 뜨므로 강제로 추가!
-                    // (리스트 맨 위에 고정됩니다)
+                    // [중요] 1. 내 장치(HOST/pi19)는 batctl n에 안 뜨므로 강제로 추가
                     m_macs.append("2c:cf:67:8c:2a:13");
 
                     // 2. 이웃 장치 파싱 (batctl n)
