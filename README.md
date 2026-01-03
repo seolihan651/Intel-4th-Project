@@ -4,7 +4,7 @@
 # 🐢 Intel 8th Gen - 4th Team Project
 
 인텔 에지 AI SW 아카데미 8기, 4번째 팀 프로젝트 저장소입니다.  
-ROS2 기반의 TurtleBot 제어 및 Qt GUI, 그리고 별도의 통신 모듈을 포함하고 있습니다.
+ROS2 기반의 TurtleBot 제어 및 Qt GUI, 그리고 별도의 통신 모듈을 포함하고 있습니다..
 
 ## 🤝 개발팀 소개
 
