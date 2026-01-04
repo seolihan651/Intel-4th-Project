@@ -1,6 +1,10 @@
 
 
 # 📡 QoS-Aware Autonomous Mobile Mesh Relay System
+**Self-healing Mobile Relay Robot for Infrastructure-less Disaster Communication**
+> A mobile relay robot system that autonomously restores broken communication links  
+> in NLOS and disaster environments using BATMAN-ADV mesh networking  
+> and connectivity-aware navigation.
 
 ### 통신 음영 지역(NLOS) 극복을 위한 자율 이동형 메시 중계 시스템
 
@@ -10,17 +14,40 @@
 
 ## 📖 프로젝트 개요 (Overview)
 
-재난 현장이나 지하 통로와 같이 기존 통신 인프라(LTE/5G)가 붕괴되거나 닿지 않는 **음영 지역(NLOS)**에서, Client와 Server 간의 **통신 단절을 스스로 감지하고 복구하는 이동형 중계 로봇 시스템**입니다.
+재난 현장, 지하 통로, 터널과 같은 환경에서는 구조 인력의 이동에 따라  
+기존 통신 인프라(LTE/5G)가 급격히 약화되거나 완전히 단절되는 문제가 반복적으로 발생합니다.  
+고정형 중계기나 단순 신호 증폭 방식은 이러한 동적인 환경 변화에 효과적으로 대응하기 어렵습니다.
 
-단순한 신호 증폭기와 달리, 로봇이 통신 품질(TQ/RSSI)을 실시간으로 분석하여 **최적의 중계 위치로 스스로 이동**함으로써 끊김 없는 영상 전송 환경을 보장합니다.
+본 프로젝트는 이러한 한계를 해결하기 위해,  
+통신 품질(TQ/RSSI)을 실시간으로 분석하고 **중계 로봇이 직접 이동하여  
+통신 경로를 물리적으로 재구성하는 자율 이동형 메시 중계 시스템**을 제안합니다.
 
 ### 💡 핵심 기능 (Key Features)
 
-* **📡 자가 치유 네트워크 (Self-Healing Network):** `batman-adv` 기반 Layer 2 Mesh Network를 구성하여 IP 설정 없이 즉각적인 노드 합류 및 경로 복구 지원.
-* **🤖 통신 품질 기반 자율 주행 (Connectivity-Aware Navigation):** TQ(Transmission Quality) 및 RSSI 데이터를 기반으로 통신 품질이 저하되는 지점(Gradient Descent)을 예측하여 최적 위치로 이동.
-* **🧱 NLOS(비가시권) 극복:** 코너나 장애물로 인한 신호 감쇄 시, 로봇이 중계 거점으로 이동하여 물리적 통신 링크 연결.
-* **🖥️ 실시간 모니터링 GUI:** Qt 기반의 대시보드를 통해 로봇의 위치, 배터리 상태, 네트워크 토폴로지 및 TQ 값을 실시간 시각화.
+* **📡 자가 치유 네트워크 (Self-Healing Network):** - BATMAN-ADV 기반 Layer 2 메시 네트워크
+- 중앙 AP, IP 설정, NAT/DHCP 없이 노드 자동 합류 및 경로 복구
 
+* **🤖 통신 품질 기반 자율 주행 (Connectivity-Aware Navigation):** - Nav2/SLAM 미사용
+- 링크 품질(TQ/RSSI)을 목적 함수로 하는 Gradient-based 이동 제어
+- 지도 없이 통신 품질을 직접 최적화
+
+* **🧱 NLOS(비가시권) 극복:** - 코너, 장애물, 거리 증가로 인한 통신 단절을 물리적 중계로 해결
+* **🖥️ 실시간 모니터링 GUI:** - 네트워크 토폴로지, TQ, 로봇 상태를 직관적으로 시각화
+
+---
+
+##🧠 Design Rationale
+
+- Why BATMAN-ADV?
+  - Layer 2 mesh routing with self-healing capability
+  - Robust to node mobility and infrastructure failures
+  - Suitable for disaster and temporary networks
+
+- Why Gradient-based Navigation?
+  - Communication quality, not position accuracy, is the primary objective
+  - No prior map or localization required
+  - Lightweight and reactive control suitable for unstable environments
+ 
 ---
 
 ## 🛠️ 시스템 아키텍처 (System Architecture)
