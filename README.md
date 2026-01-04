@@ -2,8 +2,8 @@
 
 # 📡 QoS-Aware Autonomous Mobile Mesh Relay System
 **Self-healing Mobile Relay Robot for Infrastructure-less Disaster Communication**
-> BATM-ADV 메시 네트워킹과 연결성 인식 내비게이션을 사용하여  
->  NLOS 및 재난 환경에서 고장난 통신 링크를 자율적으로 복구하는  
+> BATMAN-ADV 메시 네트워킹과 연결성 인식 내비게이션을 사용하여 
+> NLOS 및 재난 환경에서 고장난 통신 링크를 자율적으로 복구하는  
 > 모바일 중계 로봇 시스템입니다.
 
 ### 통신 음영 지역(NLOS) 극복을 위한 자율 이동형 메시 중계 시스템
@@ -36,7 +36,7 @@
 
 ---
 
-## 🧠 디자인 근거
+## 🧠 디자인 근거(Design Rationale)
 
 - Why BATMAN-ADV?
   - 자가 치유 기능을 갖춘 L2 메시 라우팅
@@ -47,7 +47,8 @@
   - 위치 정확성이 아닌 커뮤니케이션 품질이 주요 목표
   - 사전 지도나 위치 확인이 필요 없음
   - 불안정한 환경에 적합한 가볍고 반응형 제어
- 
+
+
 ---
 
 ## 🛠️ 시스템 아키텍처 (System Architecture)
@@ -60,7 +61,7 @@ flowchart LR
     B <-->|Batman-adv Mesh| C["Explorer Client<br/>Camera/Sensor"]
     
     subgraph "Relay Robot Logic"
-    B1[TQ Analyzer] --> B2[Gradient Descent Nav]
+    B1[TQ Analyzer] --> B2[Connectivity Gradient Navigation]
     B2 --> B3[Motor Control]
     end
 
@@ -132,6 +133,23 @@ ros2 run robot_Qt gui_dashboard
 | **팀원** | **김영교** | Batman-adv Mesh 네트워크 구축 및 커널 모듈 최적화 | [@mmc47047](https://github.com/mmc47047) |
 | **팀원** | **윤찬민** | Qt GUI 대시보드 개발, 시스템 통합 테스트 | [@CMYMC](https://github.com/CMYMC) |
 | **팀원** | **정찬영** | ROS2 센서 데이터 처리 및 하드웨어 제어 | [@salnock](https://github.com/salnock) |
+
+---
+
+## ⚠️ 제한 사항 및 향후 작업
+
+- RSSI/TQ 변동으로 인해 릴레이 움직임에 국부적인 진동이 발생할 수 있습니다
+- 단일 릴레이 시나리오; 다중 릴레이 조정은 향후 작업입니다
+- 장애물 인식 내비게이션은 더 복잡한 환경에 통합될 수 있습니다
+
+---
+
+## 🧠 기술적 시사점(Technical Takeaways)
+
+- 배트맨-ADV를 사용하여 레이어 2 메시 네트워크를 구현하고 기존 IP 라우팅과의 차이점을 이해
+- SLAM이나 Nav2에 의존하지 않고 연결성을 인식하는 내비게이션 알고리즘을 설계
+- 실제 환경에서 RSSI/TQ 노이즈와 반응 제어의 실용적인 도전 과제 학습
+- ROS 2, 리눅스 네트워킹 및 임베디드 시스템을 단일 자율 시스템에 통합
 
 ---
 
