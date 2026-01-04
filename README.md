@@ -36,17 +36,17 @@
 
 ---
 
-##🧠 Design Rationale
+## 🧠 디자인 근거
 
 - Why BATMAN-ADV?
-  - Layer 2 mesh routing with self-healing capability
-  - Robust to node mobility and infrastructure failures
-  - Suitable for disaster and temporary networks
+  - 자가 치유 기능을 갖춘 L2 메시 라우팅
+  - 노드 이동성 및 인프라 장애에 강인함
+  - 재난 및 임시 네트워크에 적합
 
 - Why Gradient-based Navigation?
-  - Communication quality, not position accuracy, is the primary objective
-  - No prior map or localization required
-  - Lightweight and reactive control suitable for unstable environments
+  - 위치 정확성이 아닌 커뮤니케이션 품질이 주요 목표
+  - 사전 지도나 위치 확인이 필요 없음
+  - 불안정한 환경에 적합한 가볍고 반응형 제어
  
 ---
 
