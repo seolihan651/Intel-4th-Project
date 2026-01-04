@@ -2,9 +2,9 @@
 
 # 📡 QoS-Aware Autonomous Mobile Mesh Relay System
 **Self-healing Mobile Relay Robot for Infrastructure-less Disaster Communication**
-> A mobile relay robot system that autonomously restores broken communication links  
-> in NLOS and disaster environments using BATMAN-ADV mesh networking  
-> and connectivity-aware navigation.
+> BATM-ADV 메시 네트워킹과 연결성 인식 내비게이션을 사용하여  
+>  NLOS 및 재난 환경에서 고장난 통신 링크를 자율적으로 복구하는  
+> 모바일 중계 로봇 시스템입니다.
 
 ### 통신 음영 지역(NLOS) 극복을 위한 자율 이동형 메시 중계 시스템
 
