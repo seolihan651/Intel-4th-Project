@@ -113,51 +113,6 @@ struct BatRoute {
     int tq = -1; // 0..255
 };
 
-// batctl o에서 특정 originator 경로 파싱
-// static BatRoute getBatRouteToOriginator(const string& originatorMac) {
-//     BatRoute r;
-//     r.originator = originatorMac;
-//     if (!isMac(originatorMac)) return r;
-
-//     string out = runCmd("batctl o 2>/dev/null");
-//     if (out.empty()) return r;
-
-//     istringstream iss(out);
-//     string line;
-//     while (getline(iss, line)) {
-//         if (line.find(originatorMac) == string::npos) continue;
-
-//         string s = trim(line);
-//         if (s.empty()) continue;
-
-//         istringstream ls(s);
-//         vector<string> tok;
-//         string t;
-//         while (ls >> t) tok.push_back(t);
-//         if (tok.size() < 4) continue;
-
-//         size_t idx = 0;
-//         if (tok[0] == "*") idx = 1;
-//         if (idx + 3 >= tok.size()) continue;
-
-//         string org = tok[idx];
-//         string tqTok = tok[idx + 2];
-//         string next = tok[idx + 3];
-
-//         if (!isMac(org) || !isMac(next)) continue;
-//         if (org != originatorMac) continue;
-
-//         if (tqTok.size() >= 3 && tqTok.front() == '(' && tqTok.back() == ')') {
-//             try { r.tq = stoi(tqTok.substr(1, tqTok.size() - 2)); } catch (...) {}
-//         }
-
-//         r.ok = true;
-//         r.nexthop = next;
-//         return r;
-//     }
-//     return r;
-// }
-
 // mesh_rx_thread.cpp 내부
 
 static BatRoute getBatRouteToOriginator(const string& originatorMac) {
@@ -295,34 +250,6 @@ static std::vector<NeighborSeen> getNeighborsWithSeen()
     }
     return v;
 }
-
-
-
-// ---- minimal overlay (top-left only) ----
-// static void drawLabelTopLeft(cv::Mat& img, const string& l1, const string& l2) {
-//     double fontScale = 0.8;
-//     int thickness = 2;
-//     int baseline = 0;
-
-//     cv::Size t1 = cv::getTextSize(l1, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
-//     cv::Size t2 = cv::getTextSize(l2, cv::FONT_HERSHEY_SIMPLEX, fontScale, thickness, &baseline);
-
-//     int margin = 10;
-//     int pad = 6;
-//     int lineGap = 6;
-
-//     int w = max(t1.width, t2.width) + pad * 2;
-//     int h = (t1.height + t2.height) + pad * 2 + lineGap;
-
-//     cv::Rect box(margin, margin, min(w, img.cols - margin - 1), min(h, img.rows - margin - 1));
-//     cv::rectangle(img, box, cv::Scalar(0, 0, 0), cv::FILLED);
-
-//     cv::Point p1(margin + pad, margin + pad + t1.height);
-//     cv::Point p2(margin + pad, margin + pad + t1.height + lineGap + t2.height);
-
-//     cv::putText(img, l1, p1, cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(0, 255, 0), thickness);
-//     cv::putText(img, l2, p2, cv::FONT_HERSHEY_SIMPLEX, fontScale, cv::Scalar(0, 255, 0), thickness);
-// }
 
 // ----------------- chunk reassembly -----------------
 struct FrameBuf {
@@ -574,7 +501,7 @@ void MeshRxThread::run()
         uint16_t plen    = ntoh16(h.payload_len);
 
         if ((ssize_t)(sizeof(UdpChunkHeader) + plen) != n) continue;
-        if (ccount == 0 || cid >= ccount) continue;
+        if (ccount == 0 || ccount > 1024 || cid >= ccount) continue;
 
         // 너무 오래된 프레임 드롭(렉 누적 방지)
         if (latestShown > 0 && frameId + 50 < latestShown) continue;
@@ -604,7 +531,15 @@ void MeshRxThread::run()
             vector<uint8_t> jpg;
             size_t total = 0;
             for (auto& c : fb.chunks) total += c.size();
-            jpg.reserve(total);
+
+            // ▼▼▼ 안전장치 추가 (5MB 이상이면 무시) ▼▼▼
+            if (total > 5 * 1024 * 1024) {
+                qDebug() << "Bad Frame Size:" << total;
+                frames.erase(frameId);
+                continue;
+            }
+
+            jpg.reserve(total); // 이제 안전함
             for (auto& c : fb.chunks) jpg.insert(jpg.end(), c.begin(), c.end());
 
             cv::Mat frame = cv::imdecode(jpg, cv::IMREAD_COLOR);

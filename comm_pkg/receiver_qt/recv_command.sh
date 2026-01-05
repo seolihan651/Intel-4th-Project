@@ -1,0 +1,1 @@
+sudo -E env DISPLAY=$DISPLAY XAUTHORITH=$XAUTHORITH ./receiver
