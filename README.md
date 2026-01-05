@@ -110,7 +110,12 @@ Intel-4th-Project
 ## 🎥 Demo Videos
 
 ### NLOS Recovery Demo
+
+> Without Relay
+
 ![Normal](docs/1.gif)
+
+> With Mobile Relay
 
 ![Extension Demo](docs/2.gif)
 
