@@ -92,6 +92,13 @@ Intel-4th-Project
 
 ---
 
+🎥 Demo Videos
+
+### NLOS Recovery Demo
+![Normal](docs/1.gif)
+
+![Extension Demo](docs/2.gif)
+
 ## 🚀 설치 및 실행 (Installation & Usage)
 
 ### 사전 요구 사항 (Prerequisites)
