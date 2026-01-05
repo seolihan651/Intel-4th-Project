@@ -113,11 +113,11 @@ Intel-4th-Project
 
 > Without Relay
 
-![Normal](demo1.mp4)
+[![Without Relay](docs/1.gif)](docs/demo1.mp4)
 
 > With Mobile Relay
 
-![Extension Demo](demo2.mp4)
+[![With Mobile Relay](docs/2.gif)](docs/demo2.mp4)
 
 ## 🚀 설치 및 실행 (Installation & Usage)
 
